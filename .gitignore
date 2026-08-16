@@ -1,0 +1,21 @@
+# Secrets — never commit the real .env.
+.env
+
+# macOS / IDE noise
+.DS_Store
+.idea/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+*.iml
+
+# Windows build output
+windows/flutter/ephemeral/
+
+# Superseded Python implementation (see legacy_python/README.md)
+.venv/
+__pycache__/
+*.pyc
