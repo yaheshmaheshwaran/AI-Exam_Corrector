@@ -1,8 +1,12 @@
 # Expected outcome
 
-Marking `student_paper.pdf` against `mark_scheme.txt` (or `mark_scheme.pdf`)
-should give **14 / 20 — 70%**. Each question is in the paper to exercise one
-marking rule.
+Marking `student_paper.pdf` against `question_paper.pdf` should give
+**14 / 20 — 70%**. Each question is in the paper to exercise one marking rule.
+
+The marks come from the question paper and the judgement from the model, so no
+mark scheme is supplied. `mark_scheme.txt` is kept alongside as the reference
+for what a human marker would have written — it is what the expectations below
+were derived from, not an input to the application.
 
 | Q | Max | Expected | What it tests |
 | --- | --- | --- | --- |

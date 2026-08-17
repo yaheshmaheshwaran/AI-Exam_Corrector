@@ -17,8 +17,9 @@ const AppConfig _config = AppConfig(
   maxTokens: 32000,
 );
 
-const String _paper = 'Question 1. The mitochondrion makes ATP.';
-const String _markScheme = 'Question 1 (2 marks): names ATP (1), site (1).';
+const String _questionPaper =
+    'Question 1. Name the organelle that makes ATP. [2 marks]';
+const String _answerSheet = '1. The mitochondrion makes ATP.';
 
 const Map<String, dynamic> _validPayload = <String, dynamic>{
   'questions': <Object>[
@@ -136,12 +137,12 @@ GeminiCorrectionService _serviceReturning(
 }
 
 Future<CorrectionResult> _correct(GeminiCorrectionService service) {
-  return service.correct(paperText: _paper, markSchemeText: _markScheme);
+  return service.correct(questionPaperText: _questionPaper, answerSheetText: _answerSheet);
 }
 
 void main() {
   group('request', () {
-    test('sends the mark scheme, paper, schema and thinking level', () async {
+    test('sends both documents, the schema and the thinking level', () async {
       Map<String, dynamic>? sent;
       Map<String, String>? headers;
       Uri? url;
@@ -173,18 +174,75 @@ void main() {
       expect(responseFormat['mime_type'], 'application/json');
       expect(responseFormat, contains('schema'));
 
-      expect(sent!['input'], contains(_markScheme));
-      expect(sent!['input'], contains(_paper));
-      expect(sent!['system_instruction'], contains('single authority'));
+      expect(sent!['input'], contains(_answerSheet));
+      expect(sent!['input'], contains(_questionPaper));
+      expect(sent!['input'], contains('QUESTION PAPER:'));
+      expect(sent!['input'], contains("STUDENT'S ANSWER SHEET:"));
+      expect(
+        sent!['system_instruction'],
+        contains('The question paper is the authority'),
+      );
     });
 
-    test('refuses to call the API without a mark scheme', () async {
+    test('refuses to call the API without a question paper', () async {
+      // The question paper is what supplies the questions and their marks, so
+      // there is nothing to mark against without it.
       final GeminiCorrectionService service =
           _serviceReturning(_sseFor(jsonEncode(_validPayload)));
 
       expect(
-        () => service.correct(paperText: _paper, markSchemeText: '   '),
+        () => service.correct(
+          questionPaperText: '   ',
+          answerSheetText: _answerSheet,
+        ),
         throwsA(isA<CorrectionException>()),
+      );
+    });
+
+    test('says nothing about guidance when the teacher gave none', () async {
+      Map<String, dynamic>? sent;
+      final GeminiCorrectionService service = _serviceReturning(
+        _sseFor(jsonEncode(_validPayload)),
+        onRequest: (http.BaseRequest request, String body) =>
+            sent = jsonDecode(body) as Map<String, dynamic>,
+      );
+
+      await service.correct(
+        questionPaperText: _questionPaper,
+        answerSheetText: _answerSheet,
+      );
+
+      expect(sent!['input'], isNot(contains('ADDITIONAL MARKING GUIDANCE')));
+      expect(
+        sent!['system_instruction'],
+        isNot(contains('additional marking guidance')),
+      );
+    });
+
+    test('sends the guidance, and the rule that the paper outranks it',
+        () async {
+      Map<String, dynamic>? sent;
+      final GeminiCorrectionService service = _serviceReturning(
+        _sseFor(jsonEncode(_validPayload)),
+        onRequest: (http.BaseRequest request, String body) =>
+            sent = jsonDecode(body) as Map<String, dynamic>,
+      );
+
+      await service.correct(
+        questionPaperText: _questionPaper,
+        answerSheetText: _answerSheet,
+        guidanceText: 'Section A: one mark each.',
+      );
+
+      expect(sent!['input'], contains('ADDITIONAL MARKING GUIDANCE'));
+      expect(sent!['input'], contains('Section A: one mark each.'));
+      expect(
+        sent!['system_instruction'],
+        contains('additional marking guidance'),
+      );
+      expect(
+        sent!['system_instruction'],
+        contains('follow the question paper'),
       );
     });
 
@@ -445,8 +503,8 @@ void main() {
 
       final List<String> progress = <String>[];
       final CorrectionResult result = await service.correct(
-        paperText: _paper,
-        markSchemeText: _markScheme,
+        questionPaperText: _questionPaper,
+        answerSheetText: _answerSheet,
         onProgress: progress.add,
       );
 
@@ -582,8 +640,8 @@ void main() {
         <String>{'gemini-3.6-flash'},
         modelsTried,
       ).correct(
-        paperText: _paper,
-        markSchemeText: _markScheme,
+        questionPaperText: _questionPaper,
+        answerSheetText: _answerSheet,
         onProgress: progress.add,
       );
 
@@ -609,7 +667,7 @@ void main() {
       final CorrectionResult result = await serviceWhere(
         <String>{'gemini-3.6-flash', 'gemini-3.5-flash'},
         modelsTried,
-      ).correct(paperText: _paper, markSchemeText: _markScheme);
+      ).correct(questionPaperText: _questionPaper, answerSheetText: _answerSheet);
 
       expect(result.model, 'gemini-3.5-flash-lite');
     });
@@ -625,7 +683,7 @@ void main() {
             'gemini-3.5-flash-lite',
           },
           modelsTried,
-        ).correct(paperText: _paper, markSchemeText: _markScheme),
+        ).correct(questionPaperText: _questionPaper, answerSheetText: _answerSheet),
         throwsA(
           isA<CorrectionException>().having(
             (CorrectionException e) => e.message,
@@ -672,8 +730,8 @@ void main() {
       );
 
       final CorrectionResult result = await service.correct(
-        paperText: _paper,
-        markSchemeText: _markScheme,
+        questionPaperText: _questionPaper,
+        answerSheetText: _answerSheet,
       );
 
       expect(result.model, 'gemini-3.5-flash');
@@ -704,7 +762,7 @@ void main() {
       );
 
       await expectLater(
-        service.correct(paperText: _paper, markSchemeText: _markScheme),
+        service.correct(questionPaperText: _questionPaper, answerSheetText: _answerSheet),
         throwsA(isA<CorrectionException>()),
       );
       // A rejected key fails identically everywhere; trying the rest would

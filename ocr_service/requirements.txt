@@ -1,0 +1,31 @@
+# Handwriting OCR sidecar.
+#
+# Python 3.12 is required: PyTorch does not support 3.13+ yet, and the root
+# .venv/ (3.14, left over from legacy_python/) cannot run any of this.
+#
+#   uv venv --python 3.12 ocr_service/.venv
+#   uv pip install --python ocr_service/.venv/bin/python -r ocr_service/requirements.txt
+
+# Transport.
+fastapi>=0.115
+uvicorn>=0.32
+
+# Rasterisation and image handling.
+pymupdf>=1.24
+opencv-python-headless>=4.10
+pillow>=10.4
+numpy>=1.26,<2.3
+
+# Text-line detection (DBNet) and recognition (TrOCR).
+python-doctr>=0.10
+torch>=2.4
+torchvision>=0.19
+# Pinned below 5.0 deliberately. TrOCR's checkpoints ship RoBERTa BPE files
+# (vocab.json + merges.txt) with no tokenizer.json, and transformers 5 dropped
+# the slow-to-fast conversion path those rely on — from_pretrained fails
+# outright there, with or without sentencepiece installed.
+transformers>=4.44,<5
+
+# Needed for the tokenizer conversion above.
+sentencepiece>=0.2
+protobuf>=4.25

@@ -10,13 +10,27 @@ typedef CorrectionProgress = void Function(String message);
 /// The UI and application state depend only on this abstraction, so the
 /// underlying model or provider can be swapped without touching anything else.
 abstract class CorrectionService {
-  /// Evaluates a student's paper against a mark scheme.
+  /// Marks a student's answer sheet against a question paper.
+  ///
+  /// [questionPaperText] establishes which questions exist, their sections and
+  /// their maximum marks. [answerSheetText] is what gets judged. The two are
+  /// joined on question number.
+  ///
+  /// [guidanceText] is the teacher's optional marking notes, which fill gaps
+  /// the question paper leaves rather than overriding it.
+  ///
+  /// [fromHandwriting] tells the implementation that at least one document came
+  /// from OCR rather than a text layer. It changes how the documents should be
+  /// read, not how they are marked: transcription noise must not cost the
+  /// student marks that their actual answer earned.
   ///
   /// Implementations must return a validated [CorrectionResult] or throw an
   /// [AppException] carrying a human-readable message.
   Future<CorrectionResult> correct({
-    required String paperText,
-    required String markSchemeText,
+    required String questionPaperText,
+    required String answerSheetText,
+    String guidanceText = '',
     CorrectionProgress? onProgress,
+    bool fromHandwriting = false,
   });
 }

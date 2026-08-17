@@ -36,8 +36,8 @@ class CorrectionValidationService {
     }
     if (rawQuestions.isEmpty) {
       throw const ResultValidationException(
-        'The AI returned no questions. Check that the mark scheme and the '
-        'exam paper describe the same exam.',
+        'The AI returned no questions. Check that the question paper and the '
+        'answer sheet belong to the same exam.',
       );
     }
 
@@ -45,6 +45,8 @@ class CorrectionValidationService {
       for (int index = 0; index < rawQuestions.length; index++)
         _validateQuestion(rawQuestions[index], index + 1, warnings),
     ];
+
+    _noteUnmatchedAnswers(payload['unmatched_answers'], warnings);
 
     // Totals are always recomputed locally — the model's arithmetic is never
     // the source of truth for what the teacher sees.
@@ -110,6 +112,16 @@ class CorrectionValidationService {
       );
     }
 
+    // A maximum the question paper never printed was invented by the model, and
+    // it silently changes the total the student is marked out of. The teacher
+    // is told which question, so they can check the paper.
+    if (raw['marks_stated_in_paper'] == false) {
+      warnings.add(
+        '$label: the question paper did not state its marks, so a maximum of '
+        '${formatMarks(maximum)} was inferred from the question.',
+      );
+    }
+
     double awarded = _requireNumber(raw['awarded_marks'], '$label awarded marks');
     if (awarded < 0) {
       warnings.add('$label: awarded marks were negative and were raised to 0.');
@@ -172,6 +184,32 @@ class CorrectionValidationService {
     }
 
     return points;
+  }
+
+  /// Reports answers the student wrote that no question in the paper claims.
+  ///
+  /// Usually one of two things, and both matter: the student mislabelled an
+  /// answer, or the wrong question paper was chosen. Either way the work exists
+  /// and scored nothing, so it is never dropped silently.
+  void _noteUnmatchedAnswers(Object? raw, List<String> warnings) {
+    if (raw is! List || raw.isEmpty) return;
+
+    final List<String> numbers = <String>[];
+    for (final Object? entry in raw) {
+      if (entry is! Map<String, dynamic>) continue;
+      final Object? number = entry['question_number'];
+      if (number is String && number.trim().isNotEmpty) {
+        numbers.add(number.trim());
+      }
+    }
+
+    if (numbers.isEmpty) return;
+
+    warnings.add(
+      'The answer sheet has ${numbers.length} answer(s) whose question number '
+      'is not in the question paper (${numbers.join(', ')}). They were not '
+      'marked — check that both documents are from the same exam.',
+    );
   }
 
   double _requireNumber(Object? value, String where) {

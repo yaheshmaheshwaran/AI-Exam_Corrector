@@ -22,27 +22,59 @@ CorrectionController buildController({
   );
 }
 
+const String _answerPath = 'C:\\papers\\answers.pdf';
+const String _questionPath = 'C:\\papers\\questions.pdf';
+
+const String _answerText = '1. The mitochondrion. It makes ATP.';
+const String _questionText = 'SECTION A\n1. Name the organelle. [2 marks]';
+
+/// A controller whose two slots read genuinely different documents, which is
+/// what marking actually requires.
+CorrectionController twoDocumentController({
+  FakeCorrectionService? correctionService,
+  String answerText = _answerText,
+  String questionText = _questionText,
+}) {
+  return CorrectionController(
+    config: configuredApp,
+    correctionService: correctionService ?? FakeCorrectionService(),
+    pdfService: FakePdfService(
+      textByPath: <String, String>{
+        _answerPath: answerText,
+        _questionPath: questionText,
+      },
+    ),
+    filePicker: FakeFilePicker(_answerPath, _questionPath),
+    settings: RecordingSettingsStore(),
+  );
+}
+
+Future<void> loadBoth(CorrectionController controller) async {
+  await controller.chooseAnswerSheet();
+  await controller.chooseQuestionPaper();
+}
+
 void main() {
-  group('exam paper', () {
-    test('loads the paper and reports it', () async {
+  group('answer sheet', () {
+    test('loads and reports it', () async {
       final CorrectionController controller = buildController();
 
-      await controller.chooseExamPaper();
+      await controller.chooseAnswerSheet();
 
-      expect(controller.paper, isNotNull);
-      expect(controller.paper!.fileName, 'paper.pdf');
-      expect(controller.statusMessage, 'Exam paper loaded.');
+      expect(controller.answerSheet, isNotNull);
+      expect(controller.answerSheet!.fileName, 'paper.pdf');
+      expect(controller.statusMessage, 'Answer sheet loaded.');
       expect(controller.statusIsError, isFalse);
     });
 
-    test('surfaces an unreadable PDF without keeping the paper', () async {
+    test('surfaces an unreadable PDF without keeping it', () async {
       final CorrectionController controller = buildController(
         pdfService: FakePdfService(error: 'No readable text was found.'),
       );
 
-      await controller.chooseExamPaper();
+      await controller.chooseAnswerSheet();
 
-      expect(controller.paper, isNull);
+      expect(controller.answerSheet, isNull);
       expect(controller.pendingError, 'No readable text was found.');
       expect(controller.statusIsError, isTrue);
     });
@@ -51,61 +83,91 @@ void main() {
       final CorrectionController controller =
           buildController(pickedPath: null);
 
-      await controller.chooseExamPaper();
+      await controller.chooseAnswerSheet();
 
-      expect(controller.paper, isNull);
+      expect(controller.answerSheet, isNull);
       expect(controller.statusMessage, 'Ready.');
     });
   });
 
-  group('mark scheme', () {
-    test('loads from a PDF', () async {
+  group('question paper', () {
+    test('loads and reports it', () async {
       final CorrectionController controller = buildController(
-        pdfService: FakePdfService(text: 'Question 1 (2 marks): names ATP.'),
+        pdfService: FakePdfService(text: 'Section A\n1. Name it. [2 marks]'),
       );
 
-      await controller.loadMarkSchemeFromPdf();
+      await controller.chooseQuestionPaper();
 
-      expect(controller.markScheme.trimmed, contains('names ATP'));
-      expect(controller.statusMessage, 'Mark scheme loaded.');
+      expect(controller.questionPaper, isNotNull);
+      expect(controller.questionPaper!.text, contains('[2 marks]'));
+      expect(controller.statusMessage, 'Question paper loaded.');
+    });
+
+    test('is kept separate from the answer sheet', () async {
+      final CorrectionController controller = buildController();
+
+      await controller.chooseAnswerSheet();
+      expect(controller.questionPaper, isNull);
+
+      await controller.chooseQuestionPaper();
+      expect(controller.answerSheet, isNotNull);
+      expect(controller.questionPaper, isNotNull);
+    });
+
+    test('naming the failure says which document it was', () async {
+      final CorrectionController controller = buildController(
+        pdfService: FakePdfService(error: 'This file is not a valid PDF.'),
+      );
+
+      await controller.chooseQuestionPaper();
+
+      expect(controller.questionPaper, isNull);
+      expect(controller.statusMessage, contains('question paper'));
+    });
+  });
+
+  group('marking guidance', () {
+    test('starts empty and stays optional', () {
+      final CorrectionController controller = buildController();
+
+      expect(controller.guidance.isEmpty, isTrue);
     });
 
     test('clears on request', () {
       final CorrectionController controller = buildController()
-        ..setMarkScheme('Question 1 (2 marks)')
-        ..clearMarkScheme();
+        ..setGuidance('Section A: one mark each.')
+        ..clearGuidance();
 
-      expect(controller.markScheme.isEmpty, isTrue);
+      expect(controller.guidance.isEmpty, isTrue);
     });
   });
 
   group('correction', () {
-    test('is blocked until both inputs are present', () async {
+    test('needs both documents, and only those', () async {
       final CorrectionController controller = buildController();
       expect(controller.canCorrect, isFalse);
 
-      await controller.chooseExamPaper();
-      expect(controller.canCorrect, isFalse);
+      await controller.chooseAnswerSheet();
+      expect(controller.canCorrect, isFalse,
+          reason: 'the question paper supplies the marks');
 
-      controller.setMarkScheme('Question 1 (2 marks): names ATP.');
-      expect(controller.canCorrect, isTrue);
+      await controller.chooseQuestionPaper();
+      expect(controller.canCorrect, isTrue,
+          reason: 'guidance is optional, so this is enough');
     });
 
-    test('sends the extracted paper and mark scheme, then shows marks',
-        () async {
+    test('sends each document to its own slot, then shows marks', () async {
       final FakeCorrectionService ai = FakeCorrectionService();
-      final CorrectionController controller = buildController(
-        pdfService: FakePdfService(text: 'Extracted paper.'),
-        correctionService: ai,
-      );
+      final CorrectionController controller =
+          twoDocumentController(correctionService: ai);
 
-      await controller.chooseExamPaper();
-      controller.setMarkScheme('  Question 1 (2 marks): names ATP.  ');
+      await loadBoth(controller);
       await controller.startCorrection();
 
       expect(ai.callCount, 1);
-      expect(ai.receivedPaper, 'Extracted paper.');
-      expect(ai.receivedMarkScheme, 'Question 1 (2 marks): names ATP.');
+      // Crossing these over would mark the questions against themselves.
+      expect(ai.receivedAnswerSheet, _answerText);
+      expect(ai.receivedQuestionPaper, _questionText);
 
       expect(controller.result, isNotNull);
       expect(controller.result!.questions, hasLength(1));
@@ -114,19 +176,50 @@ void main() {
       expect(controller.isBusy, isFalse);
     });
 
-    test('refuses when the paper and the mark scheme are the same document',
-        () async {
-      // Choosing the mark scheme in step 1 marks every question "No answer
+    test('sends no guidance when the teacher wrote none', () async {
+      final FakeCorrectionService ai = FakeCorrectionService();
+      final CorrectionController controller =
+          twoDocumentController(correctionService: ai);
+
+      await loadBoth(controller);
+      await controller.startCorrection();
+
+      expect(ai.receivedGuidance, isEmpty);
+    });
+
+    test('passes the guidance through, trimmed, when there is some', () async {
+      final FakeCorrectionService ai = FakeCorrectionService();
+      final CorrectionController controller =
+          twoDocumentController(correctionService: ai);
+
+      await loadBoth(controller);
+      controller.setGuidance('  Section A: one mark each.  ');
+      await controller.startCorrection();
+
+      expect(ai.receivedGuidance, 'Section A: one mark each.');
+    });
+
+    test('does not treat two typed documents as handwriting', () async {
+      final FakeCorrectionService ai = FakeCorrectionService();
+      final CorrectionController controller =
+          twoDocumentController(correctionService: ai);
+
+      await loadBoth(controller);
+      await controller.startCorrection();
+
+      expect(ai.receivedFromHandwriting, isFalse);
+    });
+
+    test('refuses when both slots hold the same document', () async {
+      // Choosing the question paper twice marks every question "No answer
       // found" and spends a request to discover it.
-      const String scheme = 'Question 1 (2 marks)\n  1. Names ATP (1 mark)';
       final FakeCorrectionService ai = FakeCorrectionService();
       final CorrectionController controller = buildController(
-        pdfService: FakePdfService(text: '--- Page 1 ---\n$scheme'),
+        pdfService: FakePdfService(text: '--- Page 1 ---\n1. Name it.'),
         correctionService: ai,
       );
 
-      await controller.chooseExamPaper();
-      controller.setMarkScheme(scheme);
+      await loadBoth(controller);
       await controller.startCorrection();
 
       expect(ai.callCount, 0, reason: 'no request should be spent');
@@ -135,37 +228,18 @@ void main() {
       expect(controller.pendingError, contains('paper.pdf'));
     });
 
-    test('marks normally when the two documents differ', () async {
+    test('asks for the question paper when only the answer sheet is loaded',
+        () async {
       final FakeCorrectionService ai = FakeCorrectionService();
-      final CorrectionController controller = buildController(
-        pdfService: FakePdfService(text: 'Answer: the mitochondrion.'),
-        correctionService: ai,
-      );
+      final CorrectionController controller =
+          buildController(correctionService: ai);
 
-      await controller.chooseExamPaper();
-      controller.setMarkScheme('Question 1 (2 marks): names ATP.');
+      await controller.chooseAnswerSheet();
       await controller.startCorrection();
 
-      expect(ai.callCount, 1);
-      expect(controller.result, isNotNull);
-    });
-
-    test('reports a correction failure and keeps the app usable', () async {
-      final CorrectionController controller = buildController(
-        correctionService:
-            FakeCorrectionService(error: 'The API key was rejected.'),
-      );
-
-      await controller.chooseExamPaper();
-      controller.setMarkScheme('Question 1 (2 marks): names ATP.');
-      await controller.startCorrection();
-
-      expect(controller.result, isNull);
-      expect(controller.pendingError, 'The API key was rejected.');
-      expect(controller.statusMessage, 'Correction failed.');
-      expect(controller.statusIsError, isTrue);
-      expect(controller.isBusy, isFalse);
-      expect(controller.canCorrect, isTrue);
+      expect(ai.callCount, 0);
+      expect(controller.pendingError, contains('question paper'));
+      expect(controller.pendingError, contains('how many marks'));
     });
 
     test('warns at startup when no API key is configured', () {
@@ -182,8 +256,7 @@ void main() {
       expect(controller.statusMessage, contains('Settings'));
     });
 
-    test('saving a key in Settings clears the warning and arms correction',
-        () async {
+    test('saving a key in Settings clears the warning', () async {
       final RecordingSettingsStore store = RecordingSettingsStore();
       final CorrectionController controller = buildController(
         config: const AppConfig(

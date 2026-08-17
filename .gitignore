@@ -15,7 +15,13 @@ build/
 # Windows build output
 windows/flutter/ephemeral/
 
-# Superseded Python implementation (see legacy_python/README.md)
+# Python virtual environments: the superseded implementation in legacy_python/
+# and the handwriting OCR sidecar (see ocr_service/README.md).
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# A regenerable preview of the handwritten sample. The PDF beside it is the
+# fixture and is committed; this is just for looking at.
+sample/student_paper_handwritten.png

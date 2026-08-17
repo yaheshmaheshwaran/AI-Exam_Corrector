@@ -190,4 +190,105 @@ void main() {
       expect(result.questions.single.evaluation, 'No evaluation provided.');
     });
   });
+
+  group('marks the question paper did not state', () {
+    test('are reported, because an invented maximum changes the total', () {
+      final CorrectionResult result = validator.validate(<String, dynamic>{
+        'questions': <Object>[
+          <String, dynamic>{
+            ..._question(number: '4', maximum: 3, awarded: 2),
+            'marks_stated_in_paper': false,
+          },
+        ],
+        'total_marks': 2,
+        'maximum_total_marks': 3,
+        'percentage': 66.7,
+      });
+
+      expect(result.warnings.single, contains('Question 4'));
+      expect(result.warnings.single, contains('did not state its marks'));
+      expect(result.warnings.single, contains('3'));
+    });
+
+    test('pass without comment when the paper did state them', () {
+      final CorrectionResult result = validator.validate(<String, dynamic>{
+        'questions': <Object>[
+          <String, dynamic>{
+            ..._question(),
+            'marks_stated_in_paper': true,
+          },
+        ],
+        'total_marks': 4,
+        'maximum_total_marks': 5,
+        'percentage': 80,
+      });
+
+      expect(result.warnings, isEmpty);
+    });
+
+    test('pass without comment when the model omitted the flag entirely', () {
+      // Absent is not the same as false; only an explicit false is a claim
+      // that the maximum was invented.
+      final CorrectionResult result = validator.validate(<String, dynamic>{
+        'questions': <Object>[_question()],
+        'total_marks': 4,
+        'maximum_total_marks': 5,
+        'percentage': 80,
+      });
+
+      expect(result.warnings, isEmpty);
+    });
+  });
+
+  group('answers with no matching question', () {
+    test('are reported rather than dropped silently', () {
+      // The student's work exists and scored nothing. Usually a mislabelled
+      // answer or the wrong question paper — either way the teacher must know.
+      final CorrectionResult result = validator.validate(<String, dynamic>{
+        'questions': <Object>[_question()],
+        'unmatched_answers': <Object>[
+          <String, dynamic>{
+            'question_number': '9',
+            'student_answer': 'Osmosis is the movement of water.',
+          },
+          <String, dynamic>{
+            'question_number': '10',
+            'student_answer': 'Lactic acid.',
+          },
+        ],
+        'total_marks': 4,
+        'maximum_total_marks': 5,
+        'percentage': 80,
+      });
+
+      expect(result.warnings.single, contains('2 answer(s)'));
+      expect(result.warnings.single, contains('9, 10'));
+      expect(result.warnings.single, contains('same exam'));
+    });
+
+    test('say nothing when every answer matched', () {
+      final CorrectionResult result = validator.validate(<String, dynamic>{
+        'questions': <Object>[_question()],
+        'unmatched_answers': <Object>[],
+        'total_marks': 4,
+        'maximum_total_marks': 5,
+        'percentage': 80,
+      });
+
+      expect(result.warnings, isEmpty);
+    });
+
+    test('a malformed entry does not break the result', () {
+      final CorrectionResult result = validator.validate(<String, dynamic>{
+        'questions': <Object>[_question()],
+        'unmatched_answers': <Object>['not an object'],
+        'total_marks': 4,
+        'maximum_total_marks': 5,
+        'percentage': 80,
+      });
+
+      expect(result.warnings, isEmpty);
+      expect(result.questions, hasLength(1));
+    });
+  });
 }

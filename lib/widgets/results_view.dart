@@ -113,9 +113,9 @@ class _NoAnswersNotice extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   'Every question scored zero because the marked file contains '
-                  'no student answers. Check that section 1 holds the '
-                  "student's completed paper rather than the mark scheme or a "
-                  'blank question paper.',
+                  'no student answers. Check that step 1 holds the student\'s '
+                  'completed script — it is easy to choose the blank question '
+                  'paper for both.',
                   style: theme.textTheme.bodySmall
                       ?.copyWith(color: AppTheme.caution),
                 ),

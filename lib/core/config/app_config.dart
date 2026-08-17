@@ -19,6 +19,11 @@ class AppConfig {
     required this.effort,
     required this.maxTokens,
     this.fallbackModels = const <String>[],
+    this.ocrEnabled = true,
+    this.trocrModel = AppConstants.defaultTrocrModel,
+    this.ocrConfidenceThreshold = AppConstants.defaultOcrConfidenceThreshold,
+    this.visionCrossCheck = true,
+    this.ocrDpi = AppConstants.defaultOcrDpi,
   });
 
   final String? apiKey;
@@ -29,6 +34,23 @@ class AppConfig {
   /// Models to fall back to, in order, as each one's daily quota runs out.
   final List<String> fallbackModels;
 
+  /// Whether a scan with no text layer is sent to handwriting recognition.
+  /// Turning this off restores the old behaviour: such a paper is rejected.
+  final bool ocrEnabled;
+
+  /// The TrOCR checkpoint the sidecar loads.
+  final String trocrModel;
+
+  /// Below this confidence a line is cross-checked and flagged for review.
+  final double ocrConfidenceThreshold;
+
+  /// Whether low-confidence lines get a second opinion from the vision model.
+  /// Costs API requests, so it can be turned off on a tight quota.
+  final bool visionCrossCheck;
+
+  /// Resolution pages are rendered at before recognition.
+  final int ocrDpi;
+
   bool get hasApiKey => apiKey != null && apiKey!.isNotEmpty;
 
   /// Every model marking may use, best first, without repeats.
@@ -37,29 +59,43 @@ class AppConfig {
 
   /// The same configuration with a different credential or model, used when
   /// the teacher saves them in Settings.
-  AppConfig withApiKey(String? newApiKey) => AppConfig(
-        apiKey: newApiKey,
-        model: model,
-        effort: effort,
-        maxTokens: maxTokens,
-        fallbackModels: fallbackModels,
-      );
+  AppConfig withApiKey(String? newApiKey) => copyWith(apiKey: () => newApiKey);
 
-  AppConfig withModel(String newModel) => AppConfig(
-        apiKey: apiKey,
-        model: newModel.trim().isEmpty ? model : newModel.trim(),
-        effort: effort,
-        maxTokens: maxTokens,
-        fallbackModels: fallbackModels,
-      );
+  AppConfig withModel(String newModel) =>
+      newModel.trim().isEmpty ? this : copyWith(model: newModel.trim());
 
-  AppConfig withFallbackModels(List<String> models) => AppConfig(
-        apiKey: apiKey,
-        model: model,
-        effort: effort,
-        maxTokens: maxTokens,
-        fallbackModels: models,
-      );
+  AppConfig withFallbackModels(List<String> models) =>
+      copyWith(fallbackModels: models);
+
+  /// [apiKey] is passed as a callback so that clearing it is expressible;
+  /// a plain nullable parameter cannot tell "leave it alone" from "set it to
+  /// null", and removing a saved key is something Settings must be able to do.
+  AppConfig copyWith({
+    String? Function()? apiKey,
+    String? model,
+    String? effort,
+    int? maxTokens,
+    List<String>? fallbackModels,
+    bool? ocrEnabled,
+    String? trocrModel,
+    double? ocrConfidenceThreshold,
+    bool? visionCrossCheck,
+    int? ocrDpi,
+  }) {
+    return AppConfig(
+      apiKey: apiKey == null ? this.apiKey : apiKey(),
+      model: model ?? this.model,
+      effort: effort ?? this.effort,
+      maxTokens: maxTokens ?? this.maxTokens,
+      fallbackModels: fallbackModels ?? this.fallbackModels,
+      ocrEnabled: ocrEnabled ?? this.ocrEnabled,
+      trocrModel: trocrModel ?? this.trocrModel,
+      ocrConfidenceThreshold:
+          ocrConfidenceThreshold ?? this.ocrConfidenceThreshold,
+      visionCrossCheck: visionCrossCheck ?? this.visionCrossCheck,
+      ocrDpi: ocrDpi ?? this.ocrDpi,
+    );
+  }
 
   /// Reads configuration from the environment, the saved settings, and `.env`.
   static Future<AppConfig> load({
@@ -118,7 +154,50 @@ class AppConfig {
       effort: read('EXAM_CORRECTOR_EFFORT') ?? AppConstants.defaultEffort,
       maxTokens: maxTokens,
       fallbackModels: fallbackModels,
+      ocrEnabled: _flag(read('EXAM_CORRECTOR_OCR_ENABLED'), orElse: true),
+      trocrModel:
+          read('EXAM_CORRECTOR_TROCR_MODEL') ?? AppConstants.defaultTrocrModel,
+      ocrConfidenceThreshold: _threshold(read('EXAM_CORRECTOR_OCR_THRESHOLD')),
+      visionCrossCheck:
+          _flag(read('EXAM_CORRECTOR_OCR_VISION_CHECK'), orElse: true),
+      ocrDpi: _dpi(read('EXAM_CORRECTOR_OCR_DPI')),
     );
+  }
+
+  static bool _flag(String? value, {required bool orElse}) {
+    if (value == null) return orElse;
+    final String normalised = value.trim().toLowerCase();
+    if (<String>['1', 'true', 'yes', 'on'].contains(normalised)) return true;
+    if (<String>['0', 'false', 'no', 'off'].contains(normalised)) return false;
+    throw ConfigException(
+      'Expected true or false, got "$value".',
+    );
+  }
+
+  static double _threshold(String? value) {
+    if (value == null) return AppConstants.defaultOcrConfidenceThreshold;
+
+    final double? parsed = double.tryParse(value.trim());
+    if (parsed == null || parsed < 0 || parsed > 1) {
+      throw ConfigException(
+        'EXAM_CORRECTOR_OCR_THRESHOLD must be between 0 and 1, got "$value".',
+      );
+    }
+    return parsed;
+  }
+
+  static int _dpi(String? value) {
+    if (value == null) return AppConstants.defaultOcrDpi;
+
+    // The sidecar clamps to this range too; rejecting here means a typo is
+    // reported rather than silently ignored.
+    final int? parsed = int.tryParse(value.trim());
+    if (parsed == null || parsed < 100 || parsed > 400) {
+      throw ConfigException(
+        'EXAM_CORRECTOR_OCR_DPI must be between 100 and 400, got "$value".',
+      );
+    }
+    return parsed;
   }
 
   /// Splits a comma-separated model list, dropping blanks. An explicitly empty

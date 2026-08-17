@@ -14,6 +14,15 @@ class SettingsStore {
   static const String modelField = 'EXAM_CORRECTOR_MODEL';
   static const String fallbackModelsField = 'EXAM_CORRECTOR_FALLBACK_MODELS';
 
+  // Handwriting recognition. The field names match the environment variables
+  // so that AppConfig can merge both sources without translating between them.
+  static const String ocrEnabledField = 'EXAM_CORRECTOR_OCR_ENABLED';
+  static const String trocrModelField = 'EXAM_CORRECTOR_TROCR_MODEL';
+  static const String ocrThresholdField = 'EXAM_CORRECTOR_OCR_THRESHOLD';
+  static const String visionCrossCheckField =
+      'EXAM_CORRECTOR_OCR_VISION_CHECK';
+  static const String ocrDpiField = 'EXAM_CORRECTOR_OCR_DPI';
+
   /// Returns the stored values, or an empty map when nothing is saved yet.
   Future<Map<String, String>> read() async {
     final File? file = _file;
@@ -40,6 +49,11 @@ class SettingsStore {
     String? apiKey,
     String? model,
     String? fallbackModels,
+    bool? ocrEnabled,
+    String? trocrModel,
+    double? ocrThreshold,
+    bool? visionCrossCheck,
+    int? ocrDpi,
   }) async {
     final Map<String, String> values = Map<String, String>.from(await read());
 
@@ -57,6 +71,18 @@ class SettingsStore {
     // An empty list is a deliberate choice ("keep every paper on one model"),
     // so it is stored as an empty value rather than removed.
     if (fallbackModels != null) values[fallbackModelsField] = fallbackModels.trim();
+
+    // Booleans are written as the same words AppConfig parses from the
+    // environment, so a settings file can be read as if it were a .env.
+    if (ocrEnabled != null) values[ocrEnabledField] = '$ocrEnabled';
+    if (visionCrossCheck != null) {
+      values[visionCrossCheckField] = '$visionCrossCheck';
+    }
+    put(trocrModelField, trocrModel);
+    if (ocrThreshold != null) {
+      values[ocrThresholdField] = ocrThreshold.toStringAsFixed(2);
+    }
+    if (ocrDpi != null) values[ocrDpiField] = '$ocrDpi';
 
     final File? file = _file;
     if (file == null) return;

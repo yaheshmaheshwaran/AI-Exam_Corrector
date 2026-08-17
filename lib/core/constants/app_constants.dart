@@ -25,8 +25,40 @@ class AppConstants {
   static const int maxPdfBytes = 25 * 1024 * 1024; // 25 MB
 
   /// Below this many characters we assume the PDF carries no real text layer
-  /// (typically a scan or a photo of a handwritten script).
+  /// (typically a scan or a photo of a handwritten script). Such a document is
+  /// routed to handwriting recognition rather than rejected.
   static const int minUsefulPdfChars = 40;
+
+  /// Handwriting recognition defaults. Overridable through the environment and
+  /// the Settings dialog — see AppConfig.
+  ///
+  /// The large model is the default because exam scripts are the hard case:
+  /// unfamiliar hands, pencil, corrections. `trocr-base-handwritten` is roughly
+  /// four times faster and noticeably less accurate, which suits a slow machine
+  /// but not a first choice.
+  static const String defaultTrocrModel = 'microsoft/trocr-large-handwritten';
+
+  /// Lines scoring below this get a second opinion from the vision model, and
+  /// are highlighted for the teacher in review.
+  ///
+  /// Measured, not guessed. On a scanned handwritten script TrOCR's
+  /// geometric-mean token probability separates cleanly: correctly read prose
+  /// lands at 0.97–1.00, while every line it got wrong — "+" read as "t", "="
+  /// as "-", "100 / 0.05" as "( 100 ) 0.05" — landed between 0.77 and 0.91.
+  /// 0.92 sits in that gap. A lower threshold looks safer and is not: it lets
+  /// through exactly the mangled arithmetic that costs a student marks.
+  static const double defaultOcrConfidenceThreshold = 0.92;
+
+  /// 300 dpi is the sweet spot for TrOCR. Below ~200 thin pen strokes break up;
+  /// above ~400 nothing improves and memory use climbs quadratically.
+  static const int defaultOcrDpi = 300;
+
+  /// Line crops sent per vision request. The free tier counts requests, not
+  /// images, so batching is what keeps a cross-check affordable.
+  static const int visionBatchSize = 12;
+
+  /// A cold sidecar imports torch and may download weights.
+  static const Duration ocrStartupTimeout = Duration(seconds: 90);
 
   /// Google Gemini Interactions API.
   static const String apiEndpoint =

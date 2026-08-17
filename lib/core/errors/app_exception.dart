@@ -48,3 +48,18 @@ class CorrectionException extends AppException {
 class ResultValidationException extends AppException {
   const ResultValidationException(super.message);
 }
+
+/// Handwriting recognition failed.
+///
+/// Separate from [PdfExtractionException] because the remedy is different: a
+/// PDF problem is about the file the teacher chose, whereas this is usually
+/// about the OCR sidecar — not installed, not started, or unable to reach its
+/// model weights on a first run.
+class OcrException extends AppException {
+  const OcrException(super.message, {this.sidecarUnavailable = false});
+
+  /// True when the sidecar could not be started or reached at all, as opposed
+  /// to failing on this particular document. The UI points the teacher at the
+  /// installation instructions rather than at their scan.
+  final bool sidecarUnavailable;
+}

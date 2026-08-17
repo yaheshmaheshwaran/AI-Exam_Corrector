@@ -37,6 +37,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late final TextEditingController _fallbackField = TextEditingController(
     text: widget.controller.config.fallbackModels.join(', '),
   );
+  late final TextEditingController _trocrField = TextEditingController(
+    text: widget.controller.config.trocrModel,
+  );
+  late bool _ocrEnabled = widget.controller.config.ocrEnabled;
+  late bool _visionCrossCheck = widget.controller.config.visionCrossCheck;
+  late double _threshold = widget.controller.config.ocrConfidenceThreshold;
+
   bool _obscured = true;
   bool _saving = false;
 
@@ -45,6 +52,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _keyField.dispose();
     _modelField.dispose();
     _fallbackField.dispose();
+    _trocrField.dispose();
     super.dispose();
   }
 
@@ -54,6 +62,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
       apiKey: _keyField.text,
       model: _modelField.text,
       fallbackModels: _fallbackField.text,
+      ocrEnabled: _ocrEnabled,
+      trocrModel: _trocrField.text,
+      ocrThreshold: _threshold,
+      visionCrossCheck: _visionCrossCheck,
     );
     if (mounted) Navigator.of(context).pop();
   }
@@ -62,12 +74,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
 
+    // The cross-check runs on whichever model is configured for marking, so
+    // naming it here keeps the two settings visibly connected.
+    final String visionModel =
+        _modelField.text.trim().isEmpty ? 'the marking model' : _modelField.text.trim();
+
     return AlertDialog(
       title: const Text('Settings'),
       contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
       content: SizedBox(
         width: 460,
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -168,7 +186,89 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 12),
+            Text('Handwritten papers', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 6),
+            Text(
+              'A scan or photograph with no text layer is read by Microsoft '
+              'TrOCR running on this machine. Turn this off to reject such '
+              'papers instead.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              key: const Key('settings-ocr-enabled'),
+              value: _ocrEnabled,
+              onChanged: _saving
+                  ? null
+                  : (bool value) => setState(() => _ocrEnabled = value),
+              title: const Text('Read handwriting'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+            SwitchListTile(
+              key: const Key('settings-vision-cross-check'),
+              value: _visionCrossCheck,
+              onChanged: _saving || !_ocrEnabled
+                  ? null
+                  : (bool value) => setState(() => _visionCrossCheck = value),
+              title: const Text('Double-check uncertain lines'),
+              subtitle: Text(
+                'Sends only the low-confidence line images to $visionModel '
+                'for a second opinion. Costs API requests.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: AppTheme.textSecondary),
+              ),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Flag lines below ${(_threshold * 100).round()}% confidence',
+              style: theme.textTheme.titleSmall,
+            ),
+            Slider(
+              key: const Key('settings-ocr-threshold'),
+              value: _threshold,
+              min: 0.5,
+              max: 0.99,
+              divisions: 49,
+              label: '${(_threshold * 100).round()}%',
+              onChanged: _saving || !_ocrEnabled
+                  ? null
+                  : (double value) => setState(() => _threshold = value),
+            ),
+            Text(
+              'Correctly read handwriting usually scores above 95%; misread '
+              'symbols and arithmetic score between 75% and 90%. Lowering this '
+              'lets more mistakes through unchecked.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 14),
+            Text('Recognition model', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 6),
+            TextField(
+              key: const Key('settings-trocr-model'),
+              controller: _trocrField,
+              enabled: !_saving && _ocrEnabled,
+              onSubmitted: (_) => _save(),
+              decoration: const InputDecoration(
+                hintText: 'microsoft/trocr-large-handwritten',
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'trocr-base-handwritten is about four times faster and less '
+              'accurate. Changing this downloads the new weights on first use.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: AppTheme.textSecondary),
+            ),
           ],
+        ),
         ),
       ),
       actions: <Widget>[

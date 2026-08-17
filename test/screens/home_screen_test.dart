@@ -8,6 +8,9 @@ import 'package:exam_corrector/state/correction_controller.dart';
 
 import '../state/fakes.dart';
 
+const String _answerPath = 'C:\\papers\\answers.pdf';
+const String _questionPath = 'C:\\papers\\questions.pdf';
+
 CorrectionController _controller({
   FakePdfService? pdfService,
   FakeCorrectionService? correctionService,
@@ -17,10 +20,24 @@ CorrectionController _controller({
   return CorrectionController(
     config: config,
     correctionService: correctionService ?? FakeCorrectionService(),
-    pdfService: pdfService ?? FakePdfService(),
-    filePicker: FakeFilePicker('C:\\papers\\paper.pdf'),
+    pdfService: pdfService ??
+        FakePdfService(
+          textByPath: const <String, String>{
+            _answerPath: '1. The mitochondrion makes ATP.',
+            _questionPath: 'SECTION A\n1. Name the organelle. [2 marks]',
+          },
+        ),
+    filePicker: FakeFilePicker(_answerPath, _questionPath),
     settings: settings ?? RecordingSettingsStore(),
   );
+}
+
+/// Fills both document slots by tapping the two Choose buttons in order.
+Future<void> _chooseBoth(WidgetTester tester) async {
+  await tester.tap(find.text('Choose…').first);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Choose…').last);
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -30,32 +47,31 @@ void main() {
 
     await tester.pumpWidget(ExamCorrectorApp(controller: _controller()));
 
-    // The three workflow steps are on screen, and nothing is marked yet.
-    expect(find.text('1. Student exam paper (PDF)'), findsOneWidget);
-    expect(find.text('2. Mark scheme'), findsOneWidget);
-    expect(find.text('3. Correction result'), findsOneWidget);
+    // The four workflow steps are on screen, and nothing is marked yet.
+    expect(find.text("1. Student's answer sheet"), findsOneWidget);
+    expect(find.text('2. Question paper'), findsOneWidget);
+    expect(find.text('3. Marking guidance (optional)'), findsOneWidget);
+    expect(find.text('4. Correction result'), findsOneWidget);
     expect(find.text('Correction results will appear here.'), findsOneWidget);
 
-    // Correction is unavailable until both inputs exist.
+    // Correction is unavailable until both documents exist.
     FilledButton correctButton() =>
         tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Correct paper'));
     expect(correctButton().onPressed, isNull);
 
-    // Step 1 — choose the paper.
-    await tester.tap(find.text('Choose PDF…'));
+    // Step 1 — the answer sheet alone is not enough.
+    await tester.tap(find.text('Choose…').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('paper.pdf'), findsOneWidget);
+    expect(find.textContaining('answers.pdf'), findsOneWidget);
     expect(correctButton().onPressed, isNull);
 
-    // Step 2 — provide the mark scheme.
-    await tester.enterText(
-      find.byType(TextField),
-      'Question 1 (2 marks): names ATP (1), identifies the site (1).',
-    );
-    await tester.pump();
+    // Step 2 — the question paper arms it, with no guidance typed.
+    await tester.tap(find.text('Choose…').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('questions.pdf'), findsOneWidget);
     expect(correctButton().onPressed, isNotNull);
 
-    // Step 3 — correct.
+    // Step 4 — correct.
     await tester.tap(find.text('Correct paper'));
     await tester.pumpAndSettle();
 
@@ -90,10 +106,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Choose PDF…'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Question 1 (2 marks)');
-    await tester.pump();
+    await _chooseBoth(tester);
     await tester.tap(find.text('Correct paper'));
     await tester.pumpAndSettle();
 
@@ -125,40 +138,53 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Choose PDF…'));
+    await tester.tap(find.text('Choose…').first);
     await tester.pumpAndSettle();
 
     expect(
       find.text('No readable text was found in this PDF.'),
       findsOneWidget,
     );
-    expect(find.text('No file selected.'), findsOneWidget);
+    expect(
+      find.textContaining('Choose the completed script'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('loads a mark scheme from a PDF into the field', (WidgetTester tester) async {
+  testWidgets('keeps the optional guidance out of the way until used',
+      (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    await tester.pumpWidget(
-      ExamCorrectorApp(
-        controller: _controller(
-          pdfService: FakePdfService(text: 'Question 1 (2 marks): names ATP.'),
-        ),
-      ),
-    );
+    final CorrectionController controller = _controller();
+    await tester.pumpWidget(ExamCorrectorApp(controller: controller));
 
-    await tester.tap(find.text('Load from PDF…'));
-    await tester.pumpAndSettle();
-
+    // Empty to begin with, and marking is armed without it.
+    await _chooseBoth(tester);
+    expect(controller.guidance.isEmpty, isTrue);
     expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Question 1 (2 marks): names ATP.',
+      tester
+          .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Correct paper'))
+          .onPressed,
+      isNotNull,
     );
+
+    await tester.enterText(
+      find.byKey(const Key('guidance-input')),
+      'Section A: one mark each.',
+    );
+    await tester.pump();
+    expect(controller.guidance.trimmed, 'Section A: one mark each.');
 
     await tester.tap(find.text('Clear'));
     await tester.pumpAndSettle();
+    expect(controller.guidance.isEmpty, isTrue);
     expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      tester
+          .widget<TextField>(find.byKey(const Key('guidance-input')))
+          .controller!
+          .text,
       isEmpty,
     );
   });
@@ -176,10 +202,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Choose PDF…'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Question 1 (2 marks)');
-    await tester.pump();
+    await _chooseBoth(tester);
     await tester.tap(find.text('Correct paper'));
     await tester.pumpAndSettle();
 
@@ -189,7 +212,7 @@ void main() {
       find.text('No answers were found anywhere in this paper'),
       findsOneWidget,
     );
-    expect(find.textContaining('mark scheme or a blank question paper'),
+    expect(find.textContaining('easy to choose the blank question paper'),
         findsOneWidget);
     expect(find.text('Total marks: 0 / 2'), findsOneWidget);
   });
@@ -215,10 +238,7 @@ void main() {
         expect(tester.takeException(), isNull);
 
         // …and with a result on screen, which is the taller state.
-        await tester.tap(find.text('Choose PDF…'));
-        await tester.pumpAndSettle();
-        await tester.enterText(find.byType(TextField), 'Question 1 (2 marks)');
-        await tester.pump();
+        await _chooseBoth(tester);
         await tester.tap(find.text('Correct paper'));
         await tester.pumpAndSettle();
 

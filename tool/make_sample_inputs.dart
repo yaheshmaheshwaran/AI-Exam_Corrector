@@ -118,6 +118,62 @@ END OF PAPER
 ''',
 ];
 
+/// The question paper: the same exam with no answers on it.
+///
+/// This is the marking authority now — it is where the questions, the sections
+/// and the marks come from. Divided into two sections of ten marks each so that
+/// section-scoped guidance ("Section A: one mark each") has something real to
+/// apply to.
+const List<String> _questionPaperPages = <String>[
+  '''
+NORTHGATE ACADEMY
+Year 10 Combined Science - Biology Paper 1
+Cell Biology, Transport and Respiration
+
+Time allowed: 40 minutes
+Total marks available: 20
+
+Answer ALL questions in the space provided.
+
+$_rule
+SECTION A - Short answer                                    [10 marks]
+$_rule
+
+1  Name the organelle that carries out aerobic respiration, and state
+   the molecule it produces.                                [2 marks]
+
+2 (a)  Write the word equation for aerobic respiration.     [1 mark]
+
+2 (b)  Explain why muscle cells contain a large number of
+       mitochondria.                                        [2 marks]
+
+3  A cell is 50 micrometres long. In a drawing of the cell, the same
+   cell measures 100 mm. Calculate the magnification of the drawing.
+   Show your working.                                       [3 marks]
+
+4  Describe two ways a root hair cell is adapted for taking up mineral
+   ions from the soil.                                      [2 marks]
+''',
+  '''
+$_rule
+SECTION B - Extended answer                                 [10 marks]
+$_rule
+
+5  State one function of the cell membrane.                 [1 mark]
+
+6  Describe how the structure of an alveolus makes it efficient for
+   gas exchange.                                            [4 marks]
+
+7  Define osmosis.                                          [3 marks]
+
+8  Name the product of anaerobic respiration in human muscle cells and
+   state one effect it has on the muscle.                   [2 marks]
+
+$_rule
+END OF PAPER
+''',
+];
+
 /// The marking authority. Pasted into the application, or loaded from the
 /// generated PDF.
 const String _markScheme = '''
@@ -215,9 +271,13 @@ TOTAL: 20 marks
 const String _expectedOutcome = '''
 # Expected outcome
 
-Marking `student_paper.pdf` against `mark_scheme.txt` (or `mark_scheme.pdf`)
-should give **14 / 20 — 70%**. Each question is in the paper to exercise one
-marking rule.
+Marking `student_paper.pdf` against `question_paper.pdf` should give
+**14 / 20 — 70%**. Each question is in the paper to exercise one marking rule.
+
+The marks come from the question paper and the judgement from the model, so no
+mark scheme is supplied. `mark_scheme.txt` is kept alongside as the reference
+for what a human marker would have written — it is what the expectations below
+were derived from, not an input to the application.
 
 | Q | Max | Expected | What it tests |
 | --- | --- | --- | --- |
@@ -278,23 +338,30 @@ Future<void> _writePdf(File file, List<String> pages) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('writes the sample paper and mark scheme into sample/', () async {
+  test('writes the sample documents into sample/', () async {
     final Directory output = Directory('sample');
     await output.create(recursive: true);
 
     String path(String name) => '${output.path}${Platform.pathSeparator}$name';
 
+    String joined(List<String> pages) =>
+        pages.map((String page) => page.trim()).join('\n\n');
+
     await _writePdf(File(path('student_paper.pdf')), _paperPages);
+    await _writePdf(File(path('question_paper.pdf')), _questionPaperPages);
     await _writePdf(File(path('mark_scheme.pdf')), <String>[_markScheme]);
 
+    await File(path('question_paper.txt'))
+        .writeAsString(joined(_questionPaperPages));
     await File(path('mark_scheme.txt')).writeAsString(_markScheme);
-    await File(path('student_paper.txt'))
-        .writeAsString(_paperPages.map((String p) => p.trim()).join('\n\n'));
+    await File(path('student_paper.txt')).writeAsString(joined(_paperPages));
     await File(path('expected_outcome.md')).writeAsString(_expectedOutcome);
 
     for (final String name in <String>[
       'student_paper.pdf',
+      'question_paper.pdf',
       'mark_scheme.pdf',
+      'question_paper.txt',
       'mark_scheme.txt',
       'student_paper.txt',
       'expected_outcome.md',

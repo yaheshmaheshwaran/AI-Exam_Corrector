@@ -10,23 +10,21 @@ import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/services/ai/gemini_correction_service.dart';
 
-const String paper = '''
+const String questionPaper = '''
 --- Page 1 ---
-Question 1. Name the organelle that carries out aerobic respiration and state
-the molecule it produces.
-Answer: The mitochondrion. It makes ATP.
+SECTION A
 
-Question 2. Give one reason why muscle cells contain many mitochondria.
-Answer: (left blank)
+1. Name the organelle that carries out aerobic respiration and state the
+   molecule it produces.                                        [2 marks]
+
+2. Give one reason why muscle cells contain many mitochondria.   [1 mark]
 ''';
 
-const String markScheme = '''
-Question 1 (2 marks)
-  - Names the mitochondrion (1 mark)
-  - States that ATP is produced (1 mark)
+const String answerSheet = '''
+--- Page 1 ---
+1. The mitochondrion. It makes ATP.
 
-Question 2 (1 mark)
-  - Muscle cells have a high energy demand / need lots of ATP (1 mark)
+2. (left blank)
 ''';
 
 Future<void> main() async {
@@ -42,8 +40,8 @@ Future<void> main() async {
 
   try {
     final CorrectionResult result = await service.correct(
-      paperText: paper,
-      markSchemeText: markScheme,
+      questionPaperText: questionPaper,
+      answerSheetText: answerSheet,
     );
 
     for (final QuestionResult question in result.questions) {

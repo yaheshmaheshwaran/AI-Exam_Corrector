@@ -13,12 +13,25 @@ class CorrectionProgress extends StatelessWidget {
     required this.isError,
     required this.isCorrecting,
     required this.onCorrect,
+    this.isTranscribing = false,
+    this.transcriptionProgress = 0,
   });
 
   final String statusMessage;
   final bool isError;
   final bool isCorrecting;
   final VoidCallback? onCorrect;
+
+  /// True while handwriting is being recognised.
+  final bool isTranscribing;
+
+  /// How far recognition has got, 0..1.
+  ///
+  /// Recognition is the one operation here whose remaining time is knowable —
+  /// pages and lines are counted up front — so it gets a determinate bar rather
+  /// than the indeterminate one marking uses. Over several minutes that is the
+  /// difference between waiting and wondering whether it has hung.
+  final double transcriptionProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +46,10 @@ class CorrectionProgress extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          _StatusDot(isError: isError, isBusy: isCorrecting),
+          _StatusDot(
+            isError: isError,
+            isBusy: isCorrecting || isTranscribing,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -44,7 +60,17 @@ class CorrectionProgress extends StatelessWidget {
               ),
             ),
           ),
-          if (isCorrecting) ...<Widget>[
+          if (isTranscribing) ...<Widget>[
+            SizedBox(
+              width: 120,
+              child: LinearProgressIndicator(
+                // Zero would read as a stalled bar during the sidecar's start,
+                // before the first page reports; indeterminate is honest there.
+                value: transcriptionProgress > 0 ? transcriptionProgress : null,
+              ),
+            ),
+            const SizedBox(width: AppTheme.gap),
+          ] else if (isCorrecting) ...<Widget>[
             const SizedBox(
               width: 120,
               child: LinearProgressIndicator(),

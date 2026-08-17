@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/models/correction_result.dart';
+import 'package:exam_corrector/screens/review/transcript_review_screen.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 import 'package:exam_corrector/widgets/correction_progress.dart';
-import 'package:exam_corrector/widgets/mark_scheme_input.dart';
+import 'package:exam_corrector/widgets/guidance_input.dart';
 import 'package:exam_corrector/widgets/pdf_upload.dart';
 import 'package:exam_corrector/widgets/results_view.dart';
 import 'package:exam_corrector/widgets/section_card.dart';
@@ -24,8 +25,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late final TextEditingController _markSchemeField;
+  late final TextEditingController _guidanceField;
   bool _showingError = false;
+  bool _showingReview = false;
 
   /// Below this height the workflow no longer fits, so the page scrolls
   /// instead of overflowing.
@@ -34,24 +36,24 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _markSchemeField =
-        TextEditingController(text: widget.controller.markScheme.text);
+    _guidanceField =
+        TextEditingController(text: widget.controller.guidance.text);
     widget.controller.addListener(_onControllerChanged);
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
-    _markSchemeField.dispose();
+    _guidanceField.dispose();
     super.dispose();
   }
 
   void _onControllerChanged() {
-    // Keep the field in step when the mark scheme changes from outside it
-    // (loaded from a PDF, or cleared).
-    final String text = widget.controller.markScheme.text;
-    if (_markSchemeField.text != text) {
-      _markSchemeField.value = TextEditingValue(
+    // Keep the field in step when the guidance changes from outside it —
+    // cleared, most often.
+    final String text = widget.controller.guidance.text;
+    if (_guidanceField.text != text) {
+      _guidanceField.value = TextEditingValue(
         text: text,
         selection: TextSelection.collapsed(offset: text.length),
       );
@@ -61,6 +63,35 @@ class _HomeScreenState extends State<HomeScreen> {
     if (error != null && !_showingError) {
       _showingError = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _showError(error));
+    }
+
+    // Recognition finished: the transcript has to be checked before it can be
+    // marked, so the review screen is opened rather than merely offered.
+    if (widget.controller.isReviewingTranscript && !_showingReview) {
+      _showingReview = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openReview());
+    }
+  }
+
+  Future<void> _openReview() async {
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(
+          name: TranscriptReviewScreen.routeName,
+        ),
+        builder: (BuildContext context) =>
+            TranscriptReviewScreen(controller: widget.controller),
+      ),
+    );
+
+    _showingReview = false;
+
+    // Dismissed with the system back gesture rather than the confirm button;
+    // the transcript still has to be accepted before marking can start.
+    if (widget.controller.isReviewingTranscript) {
+      widget.controller.confirmTranscript();
     }
   }
 
@@ -117,6 +148,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 statusMessage: controller.statusMessage,
                 isError: controller.statusIsError,
                 isCorrecting: controller.isCorrecting,
+                isTranscribing: controller.isTranscribing,
+                transcriptionProgress: controller.ocrProgress,
                 onCorrect:
                     controller.canCorrect ? controller.startCorrection : null,
               ),
@@ -129,23 +162,39 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _workflow(CorrectionController controller) {
     final bool busy = controller.isBusy;
+    final bool reading = controller.stage == CorrectionStage.readingPaper ||
+        controller.isTranscribing;
 
-    final Widget upload = PdfUpload(
-      paper: controller.paper,
-      isLoading: controller.stage == CorrectionStage.readingPaper,
-      onChoose: busy ? null : controller.chooseExamPaper,
+    final Widget answerSheet = PdfUpload(
+      title: "1. Student's answer sheet",
+      hint: 'No file selected. Choose the completed script.',
+      paper: controller.answerSheet,
+      isLoading: reading && controller.answerSheet == null,
+      onChoose: busy ? null : controller.chooseAnswerSheet,
+      onReviewTranscript: busy
+          ? null
+          : () => controller.reopenTranscript(ReviewTarget.answerSheet),
     );
 
-    final Widget markScheme = MarkSchemeInput(
-      controller: _markSchemeField,
-      isLoading: controller.stage == CorrectionStage.readingMarkScheme,
-      onChanged: controller.setMarkScheme,
-      onLoadFromPdf: busy ? null : controller.loadMarkSchemeFromPdf,
-      onClear: busy ? null : controller.clearMarkScheme,
+    final Widget questionPaper = PdfUpload(
+      title: '2. Question paper',
+      hint: 'No file selected. Choose the paper with the questions and marks.',
+      paper: controller.questionPaper,
+      isLoading: reading && controller.questionPaper == null,
+      onChoose: busy ? null : controller.chooseQuestionPaper,
+      onReviewTranscript: busy
+          ? null
+          : () => controller.reopenTranscript(ReviewTarget.questionPaper),
+    );
+
+    final Widget guidance = GuidanceInput(
+      controller: _guidanceField,
+      onChanged: controller.setGuidance,
+      onClear: busy ? null : controller.clearGuidance,
     );
 
     final Widget results = SectionCard(
-      title: '3. Correction result',
+      title: '4. Correction result',
       expandChild: true,
       trailing: controller.result == null
           ? null
@@ -156,8 +205,35 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
+    // The two documents sit side by side. They are the same shape and are
+    // chosen one after the other, and stacking them would push the results
+    // pane off the bottom of an ordinary window.
+    final Widget documents = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Expanded(child: answerSheet),
+        const SizedBox(width: AppTheme.gap),
+        Expanded(child: questionPaper),
+      ],
+    );
+
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
+        // Below this the two documents no longer fit beside each other.
+        final bool narrow = constraints.maxWidth < 820;
+
+        final List<Widget> steps = <Widget>[
+          if (narrow) ...<Widget>[
+            answerSheet,
+            const SizedBox(height: AppTheme.gap),
+            questionPaper,
+          ] else
+            documents,
+          const SizedBox(height: AppTheme.gap),
+          guidance,
+          const SizedBox(height: AppTheme.gap),
+        ];
+
         // A short window scrolls rather than overflowing; a normal one gives
         // the results pane every remaining pixel.
         if (constraints.maxHeight < _comfortableHeight) {
@@ -166,10 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                upload,
-                const SizedBox(height: AppTheme.gap),
-                markScheme,
-                const SizedBox(height: AppTheme.gap),
+                ...steps,
                 SizedBox(height: 320, child: results),
               ],
             ),
@@ -181,10 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              upload,
-              const SizedBox(height: AppTheme.gap),
-              markScheme,
-              const SizedBox(height: AppTheme.gap),
+              ...steps,
               Expanded(child: results),
             ],
           ),

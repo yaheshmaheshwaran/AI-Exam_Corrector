@@ -31,16 +31,32 @@ class PdfService {
   /// missing file, wrong format, corrupt file, encrypted file, or a scan with
   /// no text layer.
   Future<String> extractText(String path) async {
+    final String? text = await extractTextIfPresent(path);
+
+    if (text == null) {
+      throw const PdfExtractionException(
+        'No readable text was found in this PDF. It is most likely a scan or '
+        'photograph. Please supply a PDF with a text layer.',
+      );
+    }
+
+    return text;
+  }
+
+  /// Returns the text layer, or null when this PDF has none.
+  ///
+  /// The distinction matters to [DocumentIngestService]: a PDF with no text
+  /// layer is a scan, which is a job for handwriting recognition rather than an
+  /// error. Every *other* problem — missing, corrupt, encrypted, oversized —
+  /// still throws, because none of those are helped by OCR.
+  Future<String?> extractTextIfPresent(String path) async {
     final Uint8List bytes = await _readValidatedFile(path);
 
     // Parsing a long paper is CPU-bound; keep the window responsive.
     final String combined = await compute(_extractPagesText, bytes);
 
     if (_withoutPageMarkers(combined).length < AppConstants.minUsefulPdfChars) {
-      throw const PdfExtractionException(
-        'No readable text was found in this PDF. It is most likely a scan or '
-        'photograph. Please supply a PDF with a text layer.',
-      );
+      return null;
     }
 
     return combined;
