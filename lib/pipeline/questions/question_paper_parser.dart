@@ -34,7 +34,7 @@ class HeuristicQuestionPaperParser implements QuestionPaperExtractor {
     caseSensitive: false,
   );
   static final RegExp _explicitPrefix =
-      RegExp(r'^(?:q(?:uestion)?)\s*\.?\s*\d', caseSensitive: false);
+      RegExp(r'^' + QuestionLabel.prefixPattern + r'\d', caseSensitive: false);
   static final RegExp _partOnly =
       RegExp(r'^\(\s*([a-z]|[ivx]{1,4})\s*\)\s*(.*)$');
   static final RegExp _partLetterDot = RegExp(r'^([a-z])[.)]\s+(.*)$');
@@ -608,7 +608,11 @@ class HeuristicQuestionPaperParser implements QuestionPaperExtractor {
   }
 
   static final RegExp _labelPrefix = RegExp(
-    r'^\s*(?:q(?:uestion)?)?\s*\.?\s*\d{1,3}(?:\s*[.\-]?\s*\(?\s*(?:[a-z]|[ivx]{1,4})\s*\)){0,2}(?:[a-z](?![a-z]))?',
+    <String>[
+      r'^\s*(?:',
+      QuestionLabel.prefixPattern,
+      r')?\d{1,3}(?:\s*[.\-]?\s*\(?\s*(?:[a-z]|[ivx]{1,4})\s*\)){0,2}(?:[a-z](?![a-z]))?',
+    ].join(),
     caseSensitive: false,
   );
 

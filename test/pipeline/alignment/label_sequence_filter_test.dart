@@ -191,4 +191,140 @@ void main() {
     expect(alignment.warnings, hasLength(2));
     expect(alignment.warnings.first, contains('taken as part of that answer'));
   });
+
+  group('a question the sheet seems not to answer', () {
+    test('"Q. No. 1" is a label, and the answer before "2." is not front matter', () {
+      final ExamDocument doc = document(<ExamPage>[
+        page(1, regions: <PageRegion>[
+          region('head', order: 0, type: RegionType.printedText),
+          region('a1', order: 1),
+          region('a2', order: 2),
+          region('a3', order: 3),
+        ]),
+      ]);
+      final Map<String, HandwritingEvidence> evidence = <String, HandwritingEvidence>{
+        'head': reading('head', 'PART - A'),
+        'a1': reading('a1', 'Q. No. 1. [ b ] Answer: A dedicated application.'),
+        'a2': reading('a2', '2. [ b ] Answer: Data processing and control.'),
+        'a3': reading('a3', '3. [ c ] Answer: Real-Time operating system.'),
+      };
+
+      final AlignmentResult alignment = align(doc, evidence, six).alignment;
+
+      expect(regionsOf(alignment, 'Q1'), <String>['a1']);
+      expect(regionsOf(alignment, 'Q2'), <String>['a2']);
+      expect(regionsOf(alignment, 'Q3'), <String>['a3']);
+      expect(alignment.preambleRegionIds, <String>['head']);
+    });
+
+    test('a misread number is recovered where the missing answer must sit', () {
+      final ExamDocument doc = document(<ExamPage>[
+        page(1, regions: <PageRegion>[
+          region('a4', order: 0),
+          region('a5', order: 1),
+          region('a6', order: 2),
+        ]),
+      ]);
+      final Map<String, HandwritingEvidence> evidence = <String, HandwritingEvidence>{
+        'a4': reading('a4', '4 Root hairs have a large surface area.'),
+        'a5': reading('a5', 'S. The membrane controls what enters the cell.'),
+        'a6': reading('a6', '6 The alveoli are thin.'),
+      };
+
+      final AlignmentResult alignment = align(doc, evidence, six).alignment;
+
+      expect(regionsOf(alignment, 'Q5'), <String>['a5']);
+      expect(regionsOf(alignment, 'Q4'), <String>['a4']);
+      expect(alignment.alignments['Q5']!.confidence, lessThan(0.8));
+      expect(alignment.warnings.single, contains('Question 5 had no label the app could read'));
+    });
+
+    test('a misread number outside that place is left alone', () {
+      final ExamDocument doc = document(<ExamPage>[
+        page(1, regions: <PageRegion>[
+          region('a4', order: 0),
+          region('a6', order: 1),
+          region('a7', order: 2),
+        ]),
+      ]);
+      final Map<String, HandwritingEvidence> evidence = <String, HandwritingEvidence>{
+        'a4': reading('a4', '4 Root hairs have a large surface area.'),
+        'a6': reading('a6', '6 The alveoli are thin.'),
+        'a7': reading('a7', '7 Osmosis is the movement of water.\nS. Water moves across a membrane.'),
+      };
+
+      final AlignmentResult alignment = align(doc, evidence, paperOfCount(8)).alignment;
+
+      expect(alignment.alignments.containsKey('Q5'), isFalse);
+      expect(regionsOf(alignment, 'Q7'), <String>['a7']);
+    });
+
+    test("a student's list does not take a question answered elsewhere", () {
+      final ExamDocument doc = document(<ExamPage>[
+        page(1, regions: <PageRegion>[
+          region('a1', order: 0),
+          region('a3', order: 1),
+          region('a5', order: 2),
+        ]),
+      ]);
+      final Map<String, HandwritingEvidence> evidence = <String, HandwritingEvidence>{
+        'a1': reading('a1', '1 The mitochondrion.'),
+        'a3': reading('a3', '3 Magnification is 2000.'),
+        'a5': reading('a5', '5 Three features:\n1. Thin walls.\n2. Moist.\n3. Blood supply.'),
+      };
+
+      final AlignmentResult alignment = align(doc, evidence, six).alignment;
+
+      expect(alignment.alignments.containsKey('Q2'), isFalse);
+      expect(regionsOf(alignment, 'Q5'), <String>['a5']);
+    });
+
+    test('a set-aside label outside the missing answer\'s place stays set aside', () {
+      final ExamDocument doc = document(<ExamPage>[
+        page(1, regions: <PageRegion>[
+          region('a3', order: 0),
+          region('a4', order: 1),
+          region('a5', order: 2),
+        ]),
+      ]);
+      final Map<String, HandwritingEvidence> evidence = <String, HandwritingEvidence>{
+        'a3': reading('a3', '3 Magnification is 2000.'),
+        'a4': reading('a4', '4 Root hairs are long.\n2 Glucose and oxygen react.'),
+        'a5': reading('a5', '5 The membrane controls entry.'),
+      };
+
+      final ({BoundaryResult boundaries, AlignmentResult alignment}) result =
+          align(doc, evidence, six);
+
+      // Question 2 has no answer, but its answer would come before 3's
+      // label, so a "2" inside answer 4 is still not taken as it.
+      expect(result.alignment.alignments.containsKey('Q2'), isFalse);
+      expect(regionsOf(result.alignment, 'Q4'), <String>['a4']);
+    });
+  });
+
+  test('a set-aside label is taken back when its question has no other answer', () {
+    // 6 answered out of order after 1; the "2" inside that block went
+    // backwards and was set aside, but question 2 has no other answer and
+    // the "2" sits between the answers to 1 and 3.
+    final ExamDocument doc = document(<ExamPage>[
+      page(1, regions: <PageRegion>[
+        region('a1', order: 0),
+        region('a6', order: 1),
+        region('a3', order: 2),
+      ]),
+    ]);
+    final Map<String, HandwritingEvidence> evidence = <String, HandwritingEvidence>{
+      'a1': reading('a1', '1 The mitochondrion.'),
+      'a6': reading('a6', '6 The alveoli are thin.\n2 Glucose and oxygen react.'),
+      'a3': reading('a3', '3 Magnification is 2000.'),
+    };
+
+    final AlignmentResult alignment = align(doc, evidence, six).alignment;
+
+    expect(regionsOf(alignment, 'Q6'), <String>['a6.0']);
+    expect(regionsOf(alignment, 'Q2'), <String>['a6.1']);
+    expect(regionsOf(alignment, 'Q3'), <String>['a3']);
+    expect(alignment.warnings.single, contains('Question 2 had no other answer'));
+  });
 }

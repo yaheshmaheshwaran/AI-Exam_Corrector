@@ -8,12 +8,15 @@ import 'package:exam_corrector/domain/student_answer.dart';
 import 'package:exam_corrector/domain/teacher_review.dart';
 import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
+import 'package:exam_corrector/models/section_totals.dart';
 
-/// The marked paper, question by question.
+/// The marked paper, section by section and question by question.
 ///
 /// Each row is a summary to scan — marks, whether it needs review, how sure
-/// the marking is — and opens the full evidence for that question. The total
-/// counts the teacher's marks wherever they overrode the AI.
+/// the marking is — and opens the full evidence for that question. On a paper
+/// with sections the questions sit under their section, with its own total,
+/// and a section can be folded away. Every total counts the teacher's marks
+/// wherever they overrode the AI.
 class ResultsView extends StatefulWidget {
   const ResultsView({
     super.key,
@@ -38,6 +41,9 @@ class _ResultsViewState extends State<ResultsView> {
   // Desktop does not attach a primary scroll controller, so the list and its
   // scrollbar share an explicit one.
   final ScrollController _scroll = ScrollController();
+
+  /// Sections the teacher folded away, by short name.
+  final Set<String> _collapsed = <String>{};
 
   @override
   void dispose() {
@@ -89,22 +95,52 @@ class _ResultsViewState extends State<ResultsView> {
                 ),
         ),
       if (assessment.warnings.isNotEmpty) _Notes(warnings: assessment.warnings),
-      if (result != null)
-        for (final QuestionResult question in result.questions)
-          _QuestionRow(
-            question: question,
-            review: widget.reviews[question.questionId],
-            finalMarks: widget.reviews.finalMarks(question),
-            onOpen: () => widget.onOpenQuestion(question.questionId),
-          )
-      else
-        for (final Question question in assessment.questionPaper.markable)
-          _UnmarkedRow(
-            question: question,
-            answer: assessment.answers[question.questionId],
-            onOpen: () => widget.onOpenQuestion(question.questionId),
-          ),
     ];
+
+    Widget rowFor(String questionId) {
+      final QuestionResult? question = result?.question(questionId);
+      if (question != null) {
+        return _QuestionRow(
+          question: question,
+          review: widget.reviews[question.questionId],
+          finalMarks: widget.reviews.finalMarks(question),
+          onOpen: () => widget.onOpenQuestion(question.questionId),
+        );
+      }
+      final Question? unmarked = assessment.questionPaper.byId(questionId);
+      if (unmarked == null) return const SizedBox.shrink();
+      return _UnmarkedRow(
+        question: unmarked,
+        answer: assessment.answers[questionId],
+        onOpen: () => widget.onOpenQuestion(questionId),
+      );
+    }
+
+    final List<SectionTotal> sections = result != null
+        ? SectionTotal.of(result, widget.reviews, assessment.questionPaper)
+        : SectionTotal.ofPaper(assessment.questionPaper);
+    if (sections.isEmpty) {
+      rows.addAll(<Widget>[
+        if (result != null)
+          for (final QuestionResult question in result.questions) rowFor(question.questionId)
+        else
+          for (final Question question in assessment.questionPaper.markable)
+            rowFor(question.questionId),
+      ]);
+    } else {
+      for (final SectionTotal section in sections) {
+        final bool collapsed = _collapsed.contains(section.shortName);
+        rows.add(_SectionHeader(
+          section: section,
+          marked: result != null,
+          collapsed: collapsed,
+          onToggle: () => setState(() => collapsed
+              ? _collapsed.remove(section.shortName)
+              : _collapsed.add(section.shortName)),
+        ));
+        if (!collapsed) rows.addAll(section.questionIds.map(rowFor));
+      }
+    }
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
@@ -115,7 +151,7 @@ class _ResultsViewState extends State<ResultsView> {
             ? const SizedBox.shrink()
             : Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: _TotalBar(result: result, reviews: widget.reviews),
+                child: _TotalBar(result: result, reviews: widget.reviews, sections: sections),
               );
 
         return Column(
@@ -230,6 +266,103 @@ class _QuestionRow extends StatelessWidget {
     return counted
         ? row
         : Tooltip(message: question.choiceNote, child: Opacity(opacity: 0.6, child: row));
+  }
+}
+
+/// A section's heading: its name, its instructions, and what it scored.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.section,
+    required this.marked,
+    required this.collapsed,
+    required this.onToggle,
+  });
+
+  final SectionTotal section;
+  final bool marked;
+  final bool collapsed;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final double? stated = section.statedMarks;
+    final String marks = marked
+        ? '${formatMarks(section.awarded)} / ${formatMarks(section.maximum)}'
+        : '${formatMarks(section.maximum)} marks';
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 6),
+      child: Material(
+        color: AppTheme.pageBackground,
+        borderRadius: BorderRadius.circular(AppTheme.controlRadius),
+        child: InkWell(
+          key: ValueKey<String>('section-${section.shortName}'),
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(AppTheme.controlRadius),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              children: <Widget>[
+                Icon(collapsed ? Icons.chevron_right : Icons.expand_more, size: 18),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '${section.title}  ·  ${section.questionIds.length} '
+                        'question${section.questionIds.length == 1 ? '' : 's'}',
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      if (section.instructions.isNotEmpty)
+                        Text(
+                          section.instructions.replaceAll('\n', ' '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                        ),
+                    ],
+                  ),
+                ),
+                if (section.toReview > 0) ...<Widget>[
+                  _Tag(
+                    label: '${section.toReview} to review',
+                    icon: Icons.flag_outlined,
+                    colour: AppTheme.caution,
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                if (marked)
+                  SizedBox(
+                    width: 70,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: section.fraction,
+                        minHeight: 5,
+                        backgroundColor: const Color(0xFFDCE9F5),
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 10),
+                Tooltip(
+                  message: stated != null && (stated - section.maximum).abs() > 0.001
+                      ? 'The paper prints ${formatMarks(stated)} marks for this section.'
+                      : 'Marks for this section',
+                  child: Text(
+                    marks,
+                    key: ValueKey<String>('section-total-${section.shortName}'),
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -403,10 +536,17 @@ class _Notes extends StatelessWidget {
 }
 
 class _TotalBar extends StatelessWidget {
-  const _TotalBar({required this.result, required this.reviews});
+  const _TotalBar({
+    required this.result,
+    required this.reviews,
+    this.sections = const <SectionTotal>[],
+  });
 
   final CorrectionResult result;
   final TeacherReviewBook reviews;
+
+  /// Shown as a one-line breakdown under the total.
+  final List<SectionTotal> sections;
 
   @override
   Widget build(BuildContext context) {
@@ -440,6 +580,16 @@ class _TotalBar extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleLarge?.copyWith(fontSize: 18),
                     ),
+                    if (sections.isNotEmpty)
+                      Text(
+                        sections
+                            .map((SectionTotal s) => '${s.shortName} '
+                                '${formatMarks(s.awarded)}/${formatMarks(s.maximum)}')
+                            .join('   ·   '),
+                        key: const Key('section-breakdown'),
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
                     if (reviews.overrideCount > 0 || outstanding > 0)
                       Text(
                         <String>[

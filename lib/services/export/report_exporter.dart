@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/page_region.dart';
+import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/domain/teacher_review.dart';
 import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
+import 'package:exam_corrector/models/section_totals.dart';
 
 /// One student's line in a class report.
 class ClassReportRow {
@@ -13,6 +15,7 @@ class ClassReportRow {
     required this.fileName,
     required this.result,
     required this.reviews,
+    this.paper,
   });
 
   final String fileName;
@@ -20,6 +23,16 @@ class ClassReportRow {
   /// Null when the script has not been marked.
   final CorrectionResult? result;
   final TeacherReviewBook reviews;
+
+  /// The question paper it was marked against, for its sections.
+  final QuestionPaper? paper;
+
+  List<SectionTotal> get sections {
+    final CorrectionResult? marked = result;
+    final QuestionPaper? against = paper;
+    if (marked == null || against == null) return const <SectionTotal>[];
+    return SectionTotal.of(marked, reviews, against);
+  }
 }
 
 enum ReportFormat {
@@ -58,8 +71,9 @@ class ReportExporter {
     };
   }
 
-  /// The class as a gradebook: one row per student, one column per question,
-  /// the marks that count — the teacher's wherever they changed one.
+  /// The class as a gradebook: one row per student, one column per question
+  /// and per section, the marks that count — the teacher's wherever they
+  /// changed one.
   String exportClass(List<ClassReportRow> rows) {
     final List<QuestionResult> columns = <QuestionResult>[
       for (final ClassReportRow row in rows)
@@ -74,10 +88,25 @@ class ReportExporter {
       }
     }
 
+    // The whole class sits one paper: its sections come from any marked row.
+    final List<SectionTotal> template = rows
+            .map((ClassReportRow row) => row.sections)
+            .where((List<SectionTotal> sections) => sections.isNotEmpty)
+            .firstOrNull ??
+        const <SectionTotal>[];
+    final List<String?> sectionIds = <String?>[for (final SectionTotal t in template) t.sectionId];
+    String sectionCell(ClassReportRow row, String? id) =>
+        switch (row.sections.where((SectionTotal t) => t.sectionId == id).firstOrNull) {
+          final SectionTotal t => formatMarks(t.awarded),
+          null => '',
+        };
+
     final StringBuffer out = StringBuffer()
       ..writeln(<String>[
         'Student',
         for (final String id in ids) headings[id]!,
+        for (final SectionTotal t in template)
+          t.sectionId == null ? 'Other questions' : 'Section ${t.sectionId} (/${formatMarks(t.maximum)})',
         'Total',
         'Maximum',
         'Percentage',
@@ -92,6 +121,7 @@ class ReportExporter {
         out.writeln(<String>[
           row.fileName,
           for (int i = 0; i < ids.length; i++) '',
+          for (int i = 0; i < sectionIds.length; i++) '',
           '', '', '', '', '',
           'not marked',
         ].map(_cell).join(','));
@@ -105,6 +135,7 @@ class ReportExporter {
             final QuestionResult q when q.counted => formatMarks(row.reviews.finalMarks(q)),
             _ => '',
           },
+        for (final String? id in sectionIds) sectionCell(row, id),
         formatMarks(row.reviews.finalTotal(result)),
         formatMarks(result.maximumTotalMarks),
         formatPercentage(row.reviews.finalPercentage(result)),
@@ -142,7 +173,7 @@ class ReportExporter {
         'Counted',
       ].map(_cell).join(','));
 
-    for (final QuestionResult q in result.questions) {
+    void question(QuestionResult q) {
       final TeacherReview? review = reviews[q.questionId];
       out.writeln(<String>[
         assessment.answerSheet.fileName,
@@ -160,6 +191,35 @@ class ReportExporter {
         q.evaluation,
         q.counted ? 'yes' : 'no — ${q.choiceNote}',
       ].map(_cell).join(','));
+    }
+
+    final List<SectionTotal> sections =
+        SectionTotal.of(result, reviews, assessment.questionPaper);
+    if (sections.isEmpty) {
+      result.questions.forEach(question);
+    } else {
+      // Each section's questions, then its subtotal.
+      for (final SectionTotal section in sections) {
+        for (final String id in section.questionIds) {
+          if (result.question(id) case final QuestionResult q) question(q);
+        }
+        out.writeln(<String>[
+          assessment.answerSheet.fileName,
+          'SUBTOTAL',
+          section.sectionId ?? '',
+          formatMarks(section.maximum),
+          formatMarks(section.aiAwarded),
+          '',
+          formatMarks(section.awarded),
+          '',
+          '',
+          '',
+          '',
+          '',
+          section.title,
+          '',
+        ].map(_cell).join(','));
+      }
     }
 
     out.writeln(<String>[
@@ -207,6 +267,18 @@ class ReportExporter {
       'maximumMarks': result.maximumTotalMarks,
       'percentage': reviews.finalPercentage(result),
       'models': result.model,
+      'sections': <Object?>[
+        for (final SectionTotal section
+            in SectionTotal.of(result, reviews, assessment.questionPaper))
+          <String, Object?>{
+            'id': section.sectionId,
+            'title': section.title,
+            'awarded': section.awarded,
+            'aiAwarded': section.aiAwarded,
+            'maximum': section.maximum,
+            'questions': section.questionIds,
+          },
+      ],
       'questions': <Object?>[
         for (final QuestionResult q in result.questions)
           <String, Object?>{
@@ -230,7 +302,17 @@ class ReportExporter {
   ) {
     String e(String text) => const HtmlEscape().convert(text);
     final StringBuffer rows = StringBuffer();
+    final List<SectionTotal> sections =
+        SectionTotal.of(result, reviews, assessment.questionPaper);
+    final Map<String, SectionTotal> opens = <String, SectionTotal>{
+      for (final SectionTotal section in sections)
+        if (section.questionIds.isNotEmpty) section.questionIds.first: section,
+    };
     for (final QuestionResult q in result.questions) {
+      if (opens[q.questionId] case final SectionTotal section) {
+        rows.writeln('<tr class="section"><td colspan="4">${e(section.title)}</td>'
+            '<td class="n">${formatMarks(section.awarded)} / ${formatMarks(section.maximum)}</td></tr>');
+      }
       final TeacherReview? review = reviews[q.questionId];
       final bool overridden = review?.isOverride ?? false;
       rows.writeln('<tr>'
@@ -254,6 +336,7 @@ table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e5e5;
 th{background:#fafafa}td.n{white-space:nowrap}ul{margin:6px 0 0;padding-left:18px}
 .tag{font-size:11px;background:#fff4ce;color:#9d5d00;border-radius:3px;padding:1px 5px}
 .comment{color:#0067c0;margin:6px 0 0}.total{font-size:18px;margin-top:16px}
+tr.section td{background:#f0f6fc;font-weight:600}p.sections{color:#5d5d5d;margin:4px 0 0}
 </style></head><body>
 <h1>${e(assessment.answerSheet.fileName)}</h1>
 <p class="meta">Marked against ${e(assessment.questionPaper.title.isEmpty ? 'the question paper' : assessment.questionPaper.title)} · ${now.toLocal().toString().substring(0, 16)} · ${e(result.model)}</p>
@@ -261,6 +344,7 @@ th{background:#fafafa}td.n{white-space:nowrap}ul{margin:6px 0 0;padding-left:18p
 <tbody>
 $rows</tbody></table>
 <p class="total"><strong>Total: ${formatMarks(reviews.finalTotal(result))} / ${formatMarks(result.maximumTotalMarks)} (${formatPercentage(reviews.finalPercentage(result))})</strong>${reviews.overrideCount > 0 ? ' — ${reviews.overrideCount} mark(s) changed by the teacher; AI total ${formatMarks(result.totalMarks)}' : ''}</p>
+${sections.isEmpty ? '' : '<p class="sections">${sections.map((SectionTotal t) => '${e(t.title)}: ${formatMarks(t.awarded)} / ${formatMarks(t.maximum)}').join(' · ')}</p>'}
 </body></html>
 ''';
   }

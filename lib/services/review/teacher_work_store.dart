@@ -4,7 +4,8 @@ import 'package:exam_corrector/domain/json_read.dart';
 import 'package:exam_corrector/domain/teacher_review.dart';
 import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
 
-/// Persists what the teacher decided: mark reviews and transcription fixes.
+/// Persists what the teacher decided: mark reviews, transcription fixes, and
+/// which writing answers which question.
 ///
 /// Kept apart from the pipeline's artifacts, which it never touches, so the
 /// AI's results stay exactly as produced and the teacher's decisions survive
@@ -41,6 +42,26 @@ class TeacherWorkStore {
 
   Future<void> saveTranscriptions(String answerHash, Map<String, String> texts) =>
       _store.write(answerHash, _correctionsKey, Map<String, Object?>.of(texts));
+
+  static String _assignmentsKey(String paperHash) => 'teacher-assignments-$paperHash';
+
+  /// Writing the teacher chose as the answer to a question: region ID to
+  /// question ID. Kept per question paper, whose questions they name.
+  Future<Map<String, String>> assignments(String answerHash, String paperHash) async {
+    final JsonMap? saved = await _read(answerHash, _assignmentsKey(paperHash));
+    return <String, String>{
+      for (final MapEntry<String, Object?> entry
+          in (saved ?? const <String, Object?>{}).entries)
+        if (readString(entry.value) case final String questionId) entry.key: questionId,
+    };
+  }
+
+  Future<void> saveAssignments(
+    String answerHash,
+    String paperHash,
+    Map<String, String> assignments,
+  ) =>
+      _store.write(answerHash, _assignmentsKey(paperHash), Map<String, Object?>.of(assignments));
 
   /// Teacher work is read even when stage caching is turned off: it is the
   /// teacher's record, not a cache.

@@ -36,11 +36,28 @@ class EvidenceAnswerReconstructor implements AnswerReconstructor {
     required AlignmentResult alignment,
     required QuestionPaper paper,
   }) {
-    final bool strayContent = alignment.unassignedRegionIds.any((String id) {
-      final PageRegion? region = document.region(id);
-      return region != null &&
-          (region.type.isAnswerContent || document.source == DocumentSource.textLayer);
-    });
+    // Writing matched to no question is where a missed answer most often
+    // hides; it is named by page for a question left without one. Writing
+    // before the first label can only answer a question that comes before
+    // the first one answered — elsewhere it is a heading or a cover sheet.
+    List<int> pagesOf(List<String> ids) => <int>{
+          for (final String id in ids)
+            if (document.region(id) case final PageRegion region
+                when region.type.isAnswerContent || document.source == DocumentSource.textLayer)
+              region.pageNumber,
+        }.toList()
+          ..sort();
+    final List<int> unmatchedPages = pagesOf(alignment.unassignedRegionIds);
+    final List<int> preamblePages = pagesOf(alignment.preambleRegionIds);
+    final List<Question> markable = paper.markable;
+    final int firstAnswered = markable.indexWhere(
+      (Question q) => alignment.alignments.containsKey(q.questionId),
+    );
+    List<int> strayFor(int index) => <int>{
+          ...unmatchedPages,
+          if (firstAnswered < 0 || index < firstAnswered) ...preamblePages,
+        }.toList()
+          ..sort();
 
     final Map<String, List<PageRegion>> derived = <String, List<PageRegion>>{};
     for (final PageRegion region in document.regions) {
@@ -51,14 +68,14 @@ class EvidenceAnswerReconstructor implements AnswerReconstructor {
     }
 
     return <String, StudentAnswer>{
-      for (final Question question in paper.markable)
-        question.questionId: _answer(
-          question,
-          alignment.alignments[question.questionId],
+      for (int index = 0; index < markable.length; index++)
+        markable[index].questionId: _answer(
+          markable[index],
+          alignment.alignments[markable[index].questionId],
           document,
           evidence,
           alignment,
-          strayContent,
+          strayFor(index),
           derived,
         ),
     };
@@ -70,16 +87,18 @@ class EvidenceAnswerReconstructor implements AnswerReconstructor {
     ExamDocument document,
     EvidenceSet evidence,
     AlignmentResult alignment,
-    bool strayContent,
+    List<int> strayPages,
     Map<String, List<PageRegion>> derived,
   ) {
     if (mapping == null) {
       return StudentAnswer.none(
         question.questionId,
         flags: <String>[
-          if (strayContent)
-            'Some writing on the sheet could not be matched to any question — '
-                'it may belong here.',
+          if (strayPages.isNotEmpty)
+            'No answer was found, but writing on '
+                'page${strayPages.length == 1 ? '' : 's'} ${strayPages.join(', ')} '
+                'was not matched to any question — check whether it answers '
+                'this one.',
         ],
       );
     }

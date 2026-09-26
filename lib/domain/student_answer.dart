@@ -87,6 +87,9 @@ enum AlignmentMethod {
 
   /// The paper has only one question, so everything answers it.
   soleQuestion,
+
+  /// The teacher chose this writing as the answer.
+  teacher,
 }
 
 /// The segments that answer one question, and how sure the mapping is.

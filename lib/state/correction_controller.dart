@@ -301,6 +301,9 @@ class CorrectionController extends ChangeNotifier {
       script.reviews = paper == null
           ? const TeacherReviewBook()
           : await work.reviews(script.document.contentHash, paper.contentHash);
+      script.assignments = paper == null
+          ? const <String, String>{}
+          : await work.assignments(script.document.contentHash, paper.contentHash);
     } on IOException {
       // Saved work is a convenience; its absence is not an error.
     }
@@ -514,6 +517,7 @@ class CorrectionController extends ChangeNotifier {
         questionPaper: _questionPaper!,
         guidance: _guidance.trimmed,
         teacherTranscriptions: script.transcriptions,
+        teacherAssignments: script.assignments,
         cancel: token,
         onUpdate: (ProcessingJob job) {
           _job = job;
@@ -597,6 +601,45 @@ class CorrectionController extends ChangeNotifier {
           .saveTranscriptions(script.document.contentHash, script.transcriptions);
     } on IOException catch (error) {
       _fail('The correction could not be saved.', '$error');
+    }
+  }
+
+  /// Writing the teacher chose as questions' answers, for the script on
+  /// screen: region ID to question ID.
+  Map<String, String> get assignments =>
+      currentScript?.assignments ?? const <String, String>{};
+
+  /// Makes [regionIds] the writing the teacher chose for [questionId] —
+  /// replacing any chosen for it before, and taking each region away from
+  /// any other question it was chosen for. Applied at the next re-mark.
+  Future<void> assignRegions(String questionId, List<String> regionIds) async {
+    final MarkedScript? script = currentScript;
+    if (script == null || isBusy) return;
+    script.assignments = <String, String>{
+      for (final MapEntry<String, String> entry in script.assignments.entries)
+        if (entry.value != questionId && !regionIds.contains(entry.key)) entry.key: entry.value,
+      for (final String id in regionIds) id: questionId,
+    };
+    script.correctionsPending = true;
+    await _saveAssignments(script);
+    final String name =
+        assessment?.questionPaper.byId(questionId)?.displayNumber ?? questionId;
+    _setStatus(regionIds.isEmpty
+        ? 'Your choice for question $name was removed. Re-mark to apply it.'
+        : 'Answer chosen for question $name. Re-mark to apply it.');
+  }
+
+  /// Drops the teacher's choice of answer for [questionId].
+  Future<void> clearAssignments(String questionId) => assignRegions(questionId, const <String>[]);
+
+  Future<void> _saveAssignments(MarkedScript script) async {
+    final SelectedDocument? paper = _questionPaper;
+    if (paper == null) return;
+    try {
+      await TeacherWorkStore(_pipeline().store)
+          .saveAssignments(script.document.contentHash, paper.contentHash, script.assignments);
+    } on IOException catch (error) {
+      _fail('Your choice could not be saved.', '$error');
     }
   }
 
@@ -697,6 +740,7 @@ class CorrectionController extends ChangeNotifier {
           fileName: script.document.fileName,
           result: script.result,
           reviews: script.reviews,
+          paper: script.assessment?.questionPaper,
         ),
     ];
     if (rows.every((ClassReportRow row) => row.result == null)) return null;

@@ -74,6 +74,18 @@ Q2 (a) State Newton's first law. [1]
     expect(paper.byLabel(QuestionLabel.parse('2(b)')!)!.maximumMarks, 5);
   });
 
+  test('reads "Q.No." numbering on a question paper', () {
+    final QuestionPaper paper = parser.parse('''
+Q.No.1 Define an embedded system. [2 marks]
+Q. No. 2 Name one real-time operating system. [2 marks]
+Question No. 3 (a) Explain interrupts. [3 marks]
+(b) Explain polling. [3 marks]
+''');
+    expect(paper.markable.map((Question q) => q.key), <String>['1', '2', '3.a', '3.b']);
+    expect(paper.markable.first.questionText, 'Define an embedded system.');
+    expect(paper.totalMarks, 10);
+  });
+
   test('treats (i) after (h) as a letter, not a roman numeral', () {
     final QuestionPaper paper = parser.parse('''
 1 (g) Name it. [1]

@@ -69,6 +69,22 @@ void main() {
       expect(key('3(a)(ii) Show that'), '3.a.ii');
     });
 
+    test('reads "Q. No." forms as explicit labels, and MCQ answers after them', () {
+      bool explicit(String line) =>
+          detector.detect(line, paper: paper)?.explicit ?? false;
+      expect(key('Q. No. 1. [ b ] Answer: A dedicated application.'), '1');
+      expect(key('Q.No:3 The cell wall'), '3');
+      expect(key('Question No. 2(a) Glucose'), '2.a');
+      expect(key('Ques. 12 Explain'), '12');
+      expect(key('Qs.1 The nucleus'), '1');
+      expect(key('2. [ b ] Answer: Data processing and control.'), '2');
+      expect(explicit('Q. No. 1. [ b ] Answer: A dedicated application.'), isTrue);
+      expect(explicit('Q.No:3 The cell wall'), isTrue);
+      expect(explicit('2. [ b ] Answer'), isFalse);
+      // "No." alone, without a Q, is not a label prefix.
+      expect(key('No. 3 is the answer'), isNull);
+    });
+
     test('resolves a bare part against the answer being read', () {
       expect(key('(b) Because muscles', current: '2(a)'), '2.b');
       expect(key('(ii) the rate', current: '3(a)(i)'), '3.a.ii');

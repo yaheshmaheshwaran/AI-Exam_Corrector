@@ -47,8 +47,14 @@ class QuestionLabel {
     return QuestionLabel(<String>[...kept, part.toLowerCase()]);
   }
 
+  /// What may be written before a question number: `Q`, `Q.`, `Qn`, `Ques.`,
+  /// `Question`, with or without `No.` — `Q. No. 1`, `Q.No:1`, `Question No. 4`.
+  /// Shared by everything that reads labels, on either document.
+  static const String prefixPattern =
+      r'q(?:uestion|ues|n|u|s)?\s*\.?\s*(?:(?:no|num(?:ber)?)\s*\.?\s*|#\s*)?[.:#-]?\s*';
+
   static final RegExp _leading = RegExp(
-    r'^\s*(?:q(?:uestion|n|u)?)?\s*[.:#-]?\s*(\d{1,3})',
+    r'^\s*(?:' + prefixPattern + r')?\s*[.:#-]?\s*(\d{1,3})',
     caseSensitive: false,
   );
 

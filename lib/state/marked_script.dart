@@ -2,6 +2,7 @@ import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/teacher_review.dart';
 import 'package:exam_corrector/models/correction_result.dart';
+import 'package:exam_corrector/models/section_totals.dart';
 
 /// Where one student's script has got to.
 enum ScriptStatus {
@@ -29,6 +30,10 @@ class MarkedScript {
   ExamAssessment? assessment;
   TeacherReviewBook reviews = const TeacherReviewBook();
   Map<String, String> transcriptions = const <String, String>{};
+
+  /// Writing the teacher chose as a question's answer: region ID to question
+  /// ID, for the chosen question paper.
+  Map<String, String> assignments = const <String, String>{};
 
   /// Transcriptions were corrected since the script was last marked.
   bool correctionsPending = false;
@@ -58,6 +63,15 @@ class MarkedScript {
   double? get finalTotal {
     final CorrectionResult? marked = result;
     return marked == null ? null : reviews.finalTotal(marked);
+  }
+
+  /// Each section's marks, with the teacher's overrides; empty before
+  /// marking, or on a paper without sections.
+  List<SectionTotal> get sectionTotals {
+    final ExamAssessment? marked = assessment;
+    final CorrectionResult? result = marked?.result;
+    if (marked == null || result == null) return const <SectionTotal>[];
+    return SectionTotal.of(result, reviews, marked.questionPaper);
   }
 
   double? get finalPercentage {

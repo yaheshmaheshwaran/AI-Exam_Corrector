@@ -33,20 +33,36 @@ class LabelCandidate {
   String get key => LabelSelection.keyOf(regionId, line);
 }
 
-/// Which numbered labels start answers, as decided by [LabelSequenceFilter].
+/// Which numbered labels start answers, as decided by [LabelSequenceFilter]
+/// — and, for a question that would otherwise have no answer, recovered
+/// afterwards by the boundary detector.
 class LabelSelection {
   LabelSelection({
     required Set<String> considered,
     required Set<String> accepted,
-    this.warnings = const <String>[],
+    Map<String, String> notes = const <String, String>{},
+    Set<String> inLists = const <String>{},
   })  : _considered = considered,
-        _accepted = accepted;
+        _accepted = accepted,
+        _notes = Map<String, String>.of(notes),
+        _inLists = Set<String>.of(inLists);
 
   final Set<String> _considered;
   final Set<String> _accepted;
 
-  /// What was set aside, and why, for the teacher.
-  final List<String> warnings;
+  /// Why each set-aside label was set aside, keyed by its position.
+  final Map<String, String> _notes;
+
+  /// Positions set aside as part of a student's numbered list.
+  final Set<String> _inLists;
+
+  /// Labels found only by a closer look, which the ordinary detector does
+  /// not see: `S.` read for `5.`.
+  final Map<String, DetectedLabel> _forced = <String, DetectedLabel>{};
+  final List<String> _recovered = <String>[];
+
+  /// What was set aside or recovered, and why, for the teacher.
+  List<String> get warnings => <String>[..._notes.values, ..._recovered];
 
   static String keyOf(String regionId, int line) => '$regionId#$line';
 
@@ -61,6 +77,28 @@ class LabelSelection {
     return !_considered.contains(key) || _accepted.contains(key);
   }
 
+  bool isAccepted(String key) => _accepted.contains(key);
+
+  bool inList(String key) => _inLists.contains(key);
+
+  /// A label recovered at this position, if one was.
+  DetectedLabel? forcedAt(String regionId, int line) => _forced[keyOf(regionId, line)];
+
+  /// Takes back a label that was set aside.
+  void restore(String key, String note) {
+    _accepted.add(key);
+    _notes.remove(key);
+    _recovered.add(note);
+  }
+
+  /// Accepts a label the ordinary detector could not read.
+  void force(String key, DetectedLabel label, String note) {
+    _considered.add(key);
+    _accepted.add(key);
+    _forced[key] = label;
+    _recovered.add(note);
+  }
+
   /// A block split at a label: its part's opening inherits the decision made
   /// about the line it starts at.
   void carry(String regionId, int line, String toRegionId, int toLine) {
@@ -69,6 +107,8 @@ class LabelSelection {
     final String to = keyOf(toRegionId, toLine);
     _considered.add(to);
     if (_accepted.contains(from)) _accepted.add(to);
+    final DetectedLabel? forced = _forced[from];
+    if (forced != null) _forced[to] = forced;
   }
 }
 
@@ -95,7 +135,8 @@ class LabelSequenceFilter {
   LabelSelection select(List<LabelCandidate> candidates, QuestionPaper paper) {
     final List<Question> order = paper.markable;
     final Set<String> accepted = <String>{};
-    final List<String> warnings = <String>[];
+    final Map<String, String> notes = <String, String>{};
+    final Set<String> inLists = <String>{};
 
     int indexOf(QuestionLabel label) {
       for (int i = 0; i < order.length; i++) {
@@ -140,23 +181,21 @@ class LabelSequenceFilter {
       // Backwards, or the same question again.
       final List<LabelCandidate> run = _listRun(candidates, i, before, follows);
       if (run.length >= 2) {
-        warnings.add(
-          'Numbered points ${run.first.label.label.display}–'
-          '${run.last.label.label.display} in the answer to '
-          '${before.label.label.display} were taken as the student\'s own '
-          'points, not as question numbers.',
-        );
+        inLists.addAll(run.map((LabelCandidate c) => c.key));
+        notes[run.first.key] = 'Numbered points ${run.first.label.label.display}–'
+            '${run.last.label.label.display} in the answer to '
+            '${before.label.label.display} were taken as the student\'s own '
+            'points, not as question numbers.';
         i += run.length;
         continue;
       }
       if (candidate.opensRegion && !candidate.indented) {
         accept(candidate);
       } else {
-        warnings.add(
-          '"${label.observed}" in the answer to ${before.label.label.display} '
-          'was taken as part of that answer, not as question '
-          '${label.label.display}.',
-        );
+        notes[candidate.key] =
+            '"${label.observed}" in the answer to ${before.label.label.display} '
+            'was taken as part of that answer, not as question '
+            '${label.label.display}.';
       }
       i++;
     }
@@ -164,7 +203,8 @@ class LabelSequenceFilter {
     return LabelSelection(
       considered: <String>{for (final LabelCandidate c in candidates) c.key},
       accepted: accepted,
-      warnings: warnings,
+      notes: notes,
+      inLists: inLists,
     );
   }
 

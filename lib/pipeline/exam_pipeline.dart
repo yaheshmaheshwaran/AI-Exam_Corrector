@@ -14,6 +14,7 @@ import 'package:exam_corrector/domain/student_answer.dart';
 import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
+import 'package:exam_corrector/pipeline/alignment/teacher_assignments.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
 import 'package:exam_corrector/pipeline/marking/choice_resolver.dart';
 import 'package:exam_corrector/pipeline/reconstruction/evidence_answer_reconstructor.dart';
@@ -104,6 +105,7 @@ class ExamPipeline {
     required SelectedDocument questionPaper,
     String guidance = '',
     Map<String, String> teacherTranscriptions = const <String, String>{},
+    Map<String, String> teacherAssignments = const <String, String>{},
     void Function(ProcessingJob job)? onUpdate,
     CancellationToken? cancel,
   }) async {
@@ -169,7 +171,9 @@ class ExamPipeline {
           handwriting,
           questions.paper,
           teacherTranscriptions,
-          '${read.key}:${questions.key}:${ArtifactStore.fingerprint(teacherTranscriptions)}',
+          teacherAssignments,
+          '${read.key}:${questions.key}:${ArtifactStore.fingerprint(teacherTranscriptions)}'
+              ':${ArtifactStore.fingerprint(teacherAssignments)}',
         ),
       );
       job.warn(aligned.alignment.warnings);
@@ -302,9 +306,13 @@ class ExamPipeline {
     final JsonMap? cached = await _store.read(document.contentHash, key);
     final QuestionPaper? restored =
         cached == null ? null : QuestionPaper.fromJson(cached);
+    // What later stages are keyed on names this paper, not just how it was
+    // read: the same answer sheet against another paper must be aligned and
+    // marked afresh.
+    final String identity = '${document.contentHash}:$key';
     if (restored != null && restored.markable.isNotEmpty) {
       job.reused(ProcessingStage.extractingQuestions);
-      return (paper: restored, key: key);
+      return (paper: restored, key: identity);
     }
 
     String? text;
@@ -325,7 +333,7 @@ class ExamPipeline {
       cancel: cancel,
     );
     await _store.write(document.contentHash, key, paper.toJson());
-    return (paper: paper, key: key);
+    return (paper: paper, key: identity);
   }
 
   Future<({ExamDocument document, String key})> _render(
@@ -653,13 +661,14 @@ class ExamPipeline {
     Map<String, HandwritingEvidence> handwriting,
     QuestionPaper paper,
     Map<String, String> teacherTranscriptions,
+    Map<String, String> teacherAssignments,
     String upstream,
   ) async {
     // The version changes whenever boundary or alignment logic does: the
     // stage is deterministic, so a cached result is only stale when the code
     // that produced it has changed.
     final String key =
-        'alignment-${ArtifactStore.fingerprint(<Object?>['align:v4', upstream])}';
+        'alignment-${ArtifactStore.fingerprint(<Object?>['align:v5', upstream])}';
     final JsonMap? cached = await _store.read(document.documentId, key);
     if (cached != null) {
       final ExamDocument? restored =
@@ -700,9 +709,14 @@ class ExamPipeline {
         paper,
       );
     }
-    final AlignmentResult alignment = _aligner
-        .align(boundaries.segments, paper)
-        .withWarnings(boundaries.warnings);
+    // The teacher's own choices of which writing answers which question
+    // come last, over whatever was found.
+    final AlignmentResult alignment = const TeacherAssignments().apply(
+      _aligner.align(boundaries.segments, paper).withWarnings(boundaries.warnings),
+      teacherAssignments,
+      boundaries.document,
+      paper,
+    );
 
     // Working inside the answers becomes equation regions of its own, now
     // that the regions are final and their writing has been read.

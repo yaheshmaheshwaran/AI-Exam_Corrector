@@ -577,6 +577,87 @@ void main() {
           },
         );
 
+    test('a question with no answer is flagged when writing before the first label was not matched', () {
+      final ExamDocument sheet = document(<ExamPage>[
+        page(1, regions: <PageRegion>[
+          region('head', order: 0, type: RegionType.printedText),
+          region('lost', order: 1),
+          region('a2', order: 2),
+        ]),
+      ]);
+      const AlignmentResult aligned = AlignmentResult(
+        segments: <AnswerSegment>[
+          AnswerSegment(segmentId: 's0', regionIds: <String>['a2'], pageNumbers: <int>[1], labelKey: '2'),
+        ],
+        alignments: <String, QuestionAlignment>{
+          'Q2': QuestionAlignment(
+            questionId: 'Q2',
+            segmentIds: <String>['s0'],
+            confidence: 0.9,
+            methods: <AlignmentMethod>[AlignmentMethod.label],
+          ),
+        },
+        preambleRegionIds: <String>['head', 'lost'],
+      );
+
+      final Map<String, StudentAnswer> answers = reconstructor.reconstruct(
+        document: sheet,
+        evidence: EvidenceSet(handwriting: <String, HandwritingEvidence>{
+          'lost': reading('lost', 'Q No l [b] A dedicated application.'),
+          'a2': reading('a2', '2 Data processing.'),
+        }),
+        alignment: aligned,
+        paper: paperOf(<Question>[question('1'), question('2')]),
+      );
+
+      expect(answers['Q1']!.isEmpty, isTrue);
+      expect(answers['Q1']!.flags.single, contains('writing on page 1 was not matched'));
+      final QuestionResult marked = validator.unanswered(
+        MarkingTask(question: question('1'), answer: answers['Q1']!),
+      );
+      expect(marked.needsReview, isTrue);
+    });
+
+    test('writing before the first label raises no flag on a question after the first answered', () {
+      final Map<String, StudentAnswer> answers = reconstructor.reconstruct(
+        document: document(<ExamPage>[
+          page(1, regions: <PageRegion>[region('title', order: 0), region('a1', order: 1)]),
+        ]),
+        evidence: EvidenceSet(handwriting: <String, HandwritingEvidence>{
+          'title': reading('title', 'Northgate Academy Year 10 Biology'),
+          'a1': reading('a1', '1 The mitochondrion.'),
+        }),
+        alignment: const AlignmentResult(
+          segments: <AnswerSegment>[
+            AnswerSegment(segmentId: 's0', regionIds: <String>['a1'], pageNumbers: <int>[1], labelKey: '1'),
+          ],
+          alignments: <String, QuestionAlignment>{
+            'Q1': QuestionAlignment(questionId: 'Q1', segmentIds: <String>['s0'], confidence: 0.9, methods: <AlignmentMethod>[AlignmentMethod.label]),
+          },
+          preambleRegionIds: <String>['title'],
+        ),
+        paper: paperOf(<Question>[question('1'), question('2')]),
+      );
+      expect(answers['Q2']!.isEmpty, isTrue);
+      expect(answers['Q2']!.flags, isEmpty);
+    });
+
+    test('a printed heading before the first label raises no flag', () {
+      final Map<String, StudentAnswer> answers = reconstructor.reconstruct(
+        document: document(<ExamPage>[
+          page(1, regions: <PageRegion>[region('head', order: 0, type: RegionType.printedText)]),
+        ]),
+        evidence: const EvidenceSet(handwriting: <String, HandwritingEvidence>{}),
+        alignment: const AlignmentResult(
+          segments: <AnswerSegment>[],
+          alignments: <String, QuestionAlignment>{},
+          preambleRegionIds: <String>['head'],
+        ),
+        paper: paperOf(<Question>[question('1')]),
+      );
+      expect(answers['Q1']!.flags, isEmpty);
+    });
+
     test('assembles text, visuals and crossed-out work across pages', () {
       final Map<String, StudentAnswer> answers = reconstructor.reconstruct(
         document: doc(),

@@ -258,6 +258,27 @@ void main() {
       expect(item.rawText, '2 Because muscles need energy.');
     });
 
+    test('writing the teacher chooses moves to that question at the re-mark', () async {
+      final String region = controller.assessment!.answers['Q2']!.regionIds.first;
+
+      await controller.assignRegions('Q1', <String>[region]);
+      expect(controller.hasPendingCorrections, isTrue);
+      expect(controller.assignments, <String, String>{region: 'Q1'});
+      await controller.startCorrection();
+
+      expect(controller.assessment!.answers['Q1']!.regionIds, contains(region));
+      expect(controller.assessment!.answers['Q2']!.regionIds, isNot(contains(region)));
+      expect(controller.assessment!.alignment.alignments['Q1']!.methods,
+          contains(AlignmentMethod.teacher));
+
+      // Kept for this script and paper across a restart; undone on request.
+      final CorrectionController reopened = fakeController(store: store);
+      await chooseBoth(reopened);
+      expect(reopened.assignments, <String, String>{region: 'Q1'});
+      await reopened.clearAssignments('Q1');
+      expect(reopened.assignments, isEmpty);
+    });
+
     test('reverting a correction goes back to the machine reading', () async {
       final String region = controller.assessment!.answers['Q2']!.textEvidence.first.regionId;
       await controller.correctTranscription(region, 'changed');

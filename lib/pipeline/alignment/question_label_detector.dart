@@ -62,7 +62,7 @@ class QuestionLabelDetector {
   const QuestionLabelDetector();
 
   static final RegExp _explicit = RegExp(
-    r'^\s*q(?:uestion|n|u)?\s*[.:#-]?\s*\d',
+    r'^\s*' + QuestionLabel.prefixPattern + r'\d',
     caseSensitive: false,
   );
 
@@ -73,8 +73,12 @@ class QuestionLabelDetector {
 
   /// The label and everything written with it: `Q2 (a)`, `3.`, `4)`.
   static final RegExp _prefix = RegExp(
-    r'^\s*(?:q(?:uestion|n|u)?\s*[.:#-]?\s*)?\d{1,3}'
-    r'(?:\s*[.\-]?\s*\(\s*(?:[a-z]|[ivx]{1,4})\s*\)|[.\-]?(?:[a-z]|[ivx]{1,4})(?=[\s.):\]]|$)){0,2}',
+    <String>[
+      r'^\s*(?:',
+      QuestionLabel.prefixPattern,
+      r')?\d{1,3}',
+      r'(?:\s*[.\-]?\s*\(\s*(?:[a-z]|[ivx]{1,4})\s*\)|[.\-]?(?:[a-z]|[ivx]{1,4})(?=[\s.):\]]|$)){0,2}',
+    ].join(),
     caseSensitive: false,
   );
 
@@ -173,6 +177,57 @@ class QuestionLabelDetector {
       }
     }
     return null;
+  }
+
+  static final RegExp _relaxedPrefix =
+      RegExp('^\\s*(?:${QuestionLabel.prefixPattern})', caseSensitive: false);
+
+  /// A number as a recogniser may misread it: `l`/`I`/`|` for 1, `S` for 5.
+  static final RegExp _misreadNumber = RegExp(r'^([0-9lI|SsOoZzBg]{1,3})(?=[\s.):\]\-]|$)');
+  static const Map<String, String> _asDigit = <String, String>{
+    'l': '1', 'I': '1', '|': '1', 'S': '5', 's': '5', 'O': '0', 'o': '0',
+    'Z': '2', 'z': '2', 'B': '8', 'g': '9',
+  };
+
+  /// A closer look for the label of a question the sheet seems to have no
+  /// answer to: [line] is taken as starting question [major] even if its
+  /// number was misread (`S.` for `5.`) or written without the usual shape.
+  ///
+  /// Only ever used where that question's answer must sit, and only returns
+  /// a label for that question. A misread letter counts only with a `Q`
+  /// before it or a delimiter after it, so "Is the…" is never question 15.
+  DetectedLabel? detectRelaxed(
+    String line, {
+    required QuestionPaper paper,
+    required String major,
+  }) {
+    final String text = line.replaceAll('⚠', '').trim();
+    final RegExpMatch? prefix = _relaxedPrefix.firstMatch(text);
+    final bool prefixed = prefix != null && prefix.end > 0 && text[0].toLowerCase() == 'q';
+    final String rest = prefixed ? text.substring(prefix.end) : text;
+
+    final RegExpMatch? token = _misreadNumber.firstMatch(rest);
+    if (token == null) return null;
+    final String raw = token.group(1)!;
+    final String digits = raw.split('').map((String c) => _asDigit[c] ?? c).join();
+    if (!RegExp(r'^\d+$').hasMatch(digits)) return null;
+    final String after = rest.substring(raw.length);
+    final bool misread = digits != raw;
+    if (misread && !prefixed && !RegExp(r'^[.):\]\-]').hasMatch(after)) return null;
+    // A decimal is a number, not a label.
+    if (RegExp(r'^\.\d').hasMatch(after)) return null;
+
+    final QuestionLabel? parsed = QuestionLabel.parse('$digits$after');
+    if (parsed == null) return null;
+    final QuestionLabel? resolved = _resolve(parsed, paper);
+    if (resolved == null || resolved.major != major) return null;
+    return DetectedLabel(
+      label: resolved,
+      observed: '${prefixed ? text.substring(0, prefix.end) : ''}$raw'.trim(),
+      confidence: 0.7,
+      inPaper: true,
+      numbered: true,
+    );
   }
 
   /// True when [text] opens with the question's own wording.

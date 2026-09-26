@@ -51,8 +51,9 @@ class LabelBoundaryDetector implements AnswerBoundaryDetector {
     EvidenceSet evidence,
     QuestionPaper paper,
   ) {
-    final LabelSelection selection =
-        _sequence.select(candidates(document, evidence, paper), paper);
+    final List<LabelCandidate> found = candidates(document, evidence, paper);
+    final LabelSelection selection = _sequence.select(found, paper);
+    _recover(document, evidence, paper, found, selection);
     final ({ExamDocument document, EvidenceSet evidence}) split =
         _splitAtLabels(document, evidence, paper, selection);
     return BoundaryResult(
@@ -107,6 +108,146 @@ class LabelBoundaryDetector implements AnswerBoundaryDetector {
       }
     }
     return found;
+  }
+
+  // ------------------------------------------------------------------------
+  // Recovering a question the sheet seems not to answer
+  // ------------------------------------------------------------------------
+
+  /// Every place a label could start, in reading order, with its text.
+  List<({String key, String text, int page})> _positions(
+    ExamDocument document,
+    EvidenceSet evidence,
+  ) {
+    final List<({String key, String text, int page})> positions =
+        <({String key, String text, int page})>[];
+    for (final ExamPage page in document.pages) {
+      if (page.isBlank) continue;
+      for (final PageRegion region in _ordered(page.regions).where(_readsAsAnswer)) {
+        final HandwritingEvidence? reading = evidence.handwriting[region.regionId];
+        final List<String> lines = linesOf(region, evidence);
+        final String? reported = region.detectedLabel;
+        final String opening = reported != null && reported.isNotEmpty
+            ? reported
+            : lines.isEmpty
+                ? ''
+                : region.type == RegionType.questionNumber
+                    ? lines.join(' ')
+                    : lines.first;
+        positions.add((
+          key: LabelSelection.keyOf(region.regionId, 0),
+          text: opening,
+          page: region.pageNumber,
+        ));
+        if (!_splittable(region, reading)) continue;
+        final List<String> primary = _primaryLines(reading!);
+        for (int index = 1; index < primary.length; index++) {
+          positions.add((
+            key: LabelSelection.keyOf(region.regionId, index),
+            text: primary[index],
+            page: region.pageNumber,
+          ));
+        }
+      }
+    }
+    return positions;
+  }
+
+  /// Gives a question with no label on the sheet a second, closer look —
+  /// but only where its answer must sit: after the label of the answered
+  /// question before it in the paper, and before the label of the one after.
+  ///
+  /// First a label the sequence filter set aside is taken back, unless it
+  /// was part of a student's list; then each line in that window is read
+  /// again allowing for a misread number (`S.` for `5.`, `Q. No. l`).
+  void _recover(
+    ExamDocument document,
+    EvidenceSet evidence,
+    QuestionPaper paper,
+    List<LabelCandidate> found,
+    LabelSelection selection,
+  ) {
+    final List<String> majors = <String>[];
+    for (final Question question in paper.markable) {
+      if (!majors.contains(question.label.major)) majors.add(question.label.major);
+    }
+    final List<({String key, String text, int page})> positions =
+        _positions(document, evidence);
+    final Map<String, int> at = <String, int>{
+      for (int i = 0; i < positions.length; i++) positions[i].key: i,
+    };
+
+    // Where each question's accepted labels sit on the sheet.
+    final Map<String, List<int>> answered = <String, List<int>>{};
+    for (final LabelCandidate candidate in found) {
+      final int? index = at[candidate.key];
+      if (index == null || !candidate.label.inPaper) continue;
+      if (!selection.isAccepted(candidate.key)) continue;
+      answered.putIfAbsent(candidate.label.label.major, () => <int>[]).add(index);
+    }
+
+    for (int m = 0; m < majors.length; m++) {
+      final String major = majors[m];
+      if (answered.containsKey(major)) continue;
+
+      int start = -1;
+      for (int j = m - 1; j >= 0; j--) {
+        final List<int>? before = answered[majors[j]];
+        if (before != null) {
+          start = before.reduce((int a, int b) => a > b ? a : b);
+          break;
+        }
+      }
+      int end = positions.length;
+      for (int j = m + 1; j < majors.length; j++) {
+        final List<int>? after = answered[majors[j]];
+        if (after != null) {
+          end = after.reduce((int a, int b) => a < b ? a : b);
+          break;
+        }
+      }
+      if (start + 1 >= end) continue;
+      bool within(int index) => index > start && index < end;
+
+      // A label set aside that names this question after all.
+      final LabelCandidate? setAside = found
+          .where((LabelCandidate c) =>
+              c.label.label.major == major &&
+              !selection.isAccepted(c.key) &&
+              !selection.inList(c.key) &&
+              within(at[c.key] ?? -1))
+          .firstOrNull;
+      if (setAside != null) {
+        final int index = at[setAside.key]!;
+        selection.restore(
+          setAside.key,
+          'Question $major had no other answer, so "${setAside.label.observed}" '
+          'on page ${positions[index].page} was taken as its label after all.',
+        );
+        answered[major] = <int>[index];
+        continue;
+      }
+
+      // A label the ordinary reading missed.
+      for (int index = start + 1; index < end; index++) {
+        final ({String key, String text, int page}) position = positions[index];
+        if (selection.isAccepted(position.key)) continue;
+        final DetectedLabel? label =
+            _labels.detectRelaxed(position.text, paper: paper, major: major);
+        if (label == null) continue;
+        final String opening = position.text.length > 40
+            ? '${position.text.substring(0, 40)}…'
+            : position.text;
+        selection.force(
+          position.key,
+          label,
+          'Question $major had no label the app could read; the writing '
+          'starting "$opening" on page ${position.page} was taken as its answer.',
+        );
+        answered[major] = <int>[index];
+        break;
+      }
+    }
   }
 
   static bool _readsAsAnswer(PageRegion region) {
@@ -203,12 +344,13 @@ class LabelBoundaryDetector implements AnswerBoundaryDetector {
         final DetectedLabel? label = region.parentRegionId != null &&
                 region.type == RegionType.label
             ? null
-            : _admitted(
-                labelOf(region, evidence, paper, current),
-                selection,
-                region.regionId,
-                0,
-              );
+            : selection.forcedAt(region.regionId, 0) ??
+                _admitted(
+                  labelOf(region, evidence, paper, current),
+                  selection,
+                  region.regionId,
+                  0,
+                );
 
         if (label != null) {
           close();
@@ -308,12 +450,13 @@ class LabelBoundaryDetector implements AnswerBoundaryDetector {
       final List<PageRegion> updated = <PageRegion>[];
       for (final PageRegion region in _ordered(page.regions)) {
         final HandwritingEvidence? found = handwriting[region.regionId];
-        final DetectedLabel? opening = _admitted(
-          labelOf(region, evidence, paper, current),
-          selection,
-          region.regionId,
-          0,
-        );
+        final DetectedLabel? opening = selection.forcedAt(region.regionId, 0) ??
+            _admitted(
+              labelOf(region, evidence, paper, current),
+              selection,
+              region.regionId,
+              0,
+            );
         if (opening != null) current = opening.label;
 
         if (!_splittable(region, found)) {
@@ -324,12 +467,13 @@ class LabelBoundaryDetector implements AnswerBoundaryDetector {
         final List<String> lines = _primaryLines(found!);
         final List<int> cuts = <int>[];
         for (int index = 1; index < lines.length; index++) {
-          final DetectedLabel? label = _admitted(
-            _labels.detect(lines[index], paper: paper, current: current),
-            selection,
-            region.regionId,
-            index,
-          );
+          final DetectedLabel? label = selection.forcedAt(region.regionId, index) ??
+              _admitted(
+                _labels.detect(lines[index], paper: paper, current: current),
+                selection,
+                region.regionId,
+                index,
+              );
           if (label != null) {
             cuts.add(index);
             current = label.label;

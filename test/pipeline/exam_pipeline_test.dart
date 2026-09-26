@@ -48,6 +48,17 @@ class _Paper implements QuestionPaperExtractor {
   }
 }
 
+/// Counts how often answers are found afresh rather than from the cache.
+class _CountingBoundaries implements AnswerBoundaryDetector {
+  int calls = 0;
+
+  @override
+  BoundaryResult detect(ExamDocument document, EvidenceSet evidence, QuestionPaper paper) {
+    calls++;
+    return const LabelBoundaryDetector().detect(document, evidence, paper);
+  }
+}
+
 class _Renderer implements DocumentRenderer {
   _Renderer({this.unavailable = false});
 
@@ -292,7 +303,11 @@ void main() {
     if (await workspace.exists()) await workspace.delete(recursive: true);
   });
 
-  ExamPipeline build({AppConfig config = pipelineConfig}) => ExamPipeline(
+  ExamPipeline build({
+    AppConfig config = pipelineConfig,
+    AnswerBoundaryDetector boundaries = const LabelBoundaryDetector(),
+  }) =>
+      ExamPipeline(
         pdf: const _Pdf(),
         config: () => config,
         store: store,
@@ -306,7 +321,7 @@ void main() {
         visuals: VisualEvidenceEngine(diagrams: visuals),
         visualFingerprint: 'fake-visual',
         questionExtractor: paper,
-        boundaries: const LabelBoundaryDetector(),
+        boundaries: boundaries,
         aligner: const PaperQuestionAligner(),
         marker: marker,
       );
@@ -357,6 +372,23 @@ void main() {
     expect(result.question('Q3')!.choiceNote, contains('2 was answered instead'));
     expect(result.maximumTotalMarks, 4);
     expect(result.totalMarks, 2);
+  });
+
+  test('the same answer sheet against another question paper is aligned afresh', () async {
+    final _CountingBoundaries boundaries = _CountingBoundaries();
+    await build(boundaries: boundaries).run(answerSheet: answers, questionPaper: questions);
+    final int first = boundaries.calls;
+    expect(first, greaterThan(0));
+
+    final SelectedDocument other =
+        await selected(workspace, 'other_questions.pdf', DocumentRole.questionPaper);
+    await build(boundaries: boundaries).run(answerSheet: answers, questionPaper: other);
+    expect(boundaries.calls, greaterThan(first));
+
+    // And the first paper again comes straight from the cache.
+    final int second = boundaries.calls;
+    await build(boundaries: boundaries).run(answerSheet: answers, questionPaper: questions);
+    expect(boundaries.calls, second);
   });
 
   test('a second run reuses every stage from the cache', () async {

@@ -323,28 +323,35 @@ class _EvidenceColumn extends StatelessWidget {
               ? null
               : 'Page${answer.pages.length == 1 ? '' : 's'} ${answer.pages.join(', ')} · '
                   'read with ${(answer.answerConfidence * 100).round()}% confidence',
-          child: answer.isEmpty
-              ? Text(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              if (answer.isEmpty)
+                Text(
                   'No answer to this question was found on the answer sheet.',
                   style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
                 )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    for (final String regionId in answer.regionIds)
-                      if (!crossed.contains(regionId) &&
-                          (textById.containsKey(regionId) ||
-                              answer.visualRegionIds.contains(regionId)))
-                        _RegionEvidence(
-                          assessment: assessment,
-                          regionId: regionId,
-                          text: textById[regionId],
-                          visual: visualById[regionId],
-                          isVisual: answer.visualRegionIds.contains(regionId),
-                          controller: controller,
-                        ),
-                  ],
-                ),
+              else
+                for (final String regionId in answer.regionIds)
+                  if (!crossed.contains(regionId) &&
+                      (textById.containsKey(regionId) ||
+                          answer.visualRegionIds.contains(regionId)))
+                    _RegionEvidence(
+                      assessment: assessment,
+                      regionId: regionId,
+                      text: textById[regionId],
+                      visual: visualById[regionId],
+                      isVisual: answer.visualRegionIds.contains(regionId),
+                      controller: controller,
+                    ),
+              _ChooseAnswerBar(
+                assessment: assessment,
+                questionId: question.questionId,
+                noAnswer: answer.isEmpty,
+                controller: controller,
+              ),
+            ],
+          ),
         ),
         if (answer.crossedOut.isNotEmpty) ...<Widget>[
           const SizedBox(height: AppTheme.gap),
@@ -1104,6 +1111,222 @@ class _TeacherReviewPanelState extends State<TeacherReviewPanel> {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// The teacher's way to put right an answer the app did not find, or found
+/// in the wrong place: choose the writing on the sheet that answers this
+/// question.
+class _ChooseAnswerBar extends StatelessWidget {
+  const _ChooseAnswerBar({
+    required this.assessment,
+    required this.questionId,
+    required this.noAnswer,
+    required this.controller,
+  });
+
+  final ExamAssessment assessment;
+  final String questionId;
+  final bool noAnswer;
+  final CorrectionController controller;
+
+  Future<void> _choose(BuildContext context) async {
+    final List<String>? chosen = await showDialog<List<String>>(
+      context: context,
+      builder: (BuildContext context) => _ChooseAnswerDialog(
+        assessment: assessment,
+        questionId: questionId,
+        assignments: controller.assignments,
+        preselectUnmatched: noAnswer,
+      ),
+    );
+    if (chosen != null) await controller.assignRegions(questionId, chosen);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final int chosen =
+        controller.assignments.values.where((String q) => q == questionId).length;
+    final bool busy = controller.isBusy;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          if (noAnswer && chosen == 0)
+            FilledButton.tonalIcon(
+              key: const Key('choose-answer'),
+              onPressed: busy ? null : () => _choose(context),
+              icon: const Icon(Icons.touch_app_outlined, size: 16),
+              label: const Text('Choose the answer on the page…'),
+            )
+          else
+            TextButton.icon(
+              key: const Key('choose-answer'),
+              onPressed: busy ? null : () => _choose(context),
+              icon: const Icon(Icons.touch_app_outlined, size: 16),
+              label: Text(chosen == 0 ? 'Choose the answer on the page…' : 'Change your choice…'),
+            ),
+          if (chosen > 0) ...<Widget>[
+            Text(
+              'You chose $chosen piece${chosen == 1 ? '' : 's'} of writing for this answer'
+              '${controller.hasPendingCorrections ? ' — re-mark to apply.' : '.'}',
+              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.accent),
+            ),
+            TextButton(
+              onPressed: busy ? null : () => controller.clearAssignments(questionId),
+              child: const Text('Undo'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Lists the answer sheet's writing, page by page, with where the app put
+/// each piece, for the teacher to tick what answers this question.
+class _ChooseAnswerDialog extends StatefulWidget {
+  const _ChooseAnswerDialog({
+    required this.assessment,
+    required this.questionId,
+    required this.assignments,
+    required this.preselectUnmatched,
+  });
+
+  final ExamAssessment assessment;
+  final String questionId;
+  final Map<String, String> assignments;
+  final bool preselectUnmatched;
+
+  @override
+  State<_ChooseAnswerDialog> createState() => _ChooseAnswerDialogState();
+}
+
+class _ChooseAnswerDialogState extends State<_ChooseAnswerDialog> {
+  late final Set<String> _selected;
+  late final List<PageRegion> _unmatched;
+  late final List<PageRegion> _others;
+
+  ExamAssessment get _a => widget.assessment;
+
+  @override
+  void initState() {
+    super.initState();
+    final Set<String> loose = <String>{
+      ..._a.alignment.unassignedRegionIds,
+      ..._a.alignment.preambleRegionIds,
+    };
+    final List<PageRegion> regions = <PageRegion>[
+      for (final ExamPage page in _a.answerSheet.pages)
+        for (final PageRegion region in List<PageRegion>.of(page.regions)
+          ..sort((PageRegion x, PageRegion y) => x.readingOrder.compareTo(y.readingOrder)))
+          if (_offerable(region)) region,
+    ];
+    _unmatched = <PageRegion>[
+      for (final PageRegion r in regions)
+        if (loose.contains(r.regionId) && !widget.assignments.containsKey(r.regionId)) r,
+    ];
+    _others = <PageRegion>[
+      for (final PageRegion r in regions)
+        if (!_unmatched.contains(r)) r,
+    ];
+    _selected = <String>{
+      for (final MapEntry<String, String> e in widget.assignments.entries)
+        if (e.value == widget.questionId) e.key,
+      if (widget.preselectUnmatched)
+        for (final PageRegion r in _unmatched)
+          if (r.type.isAnswerContent) r.regionId,
+    };
+  }
+
+  bool _offerable(PageRegion region) {
+    if (region.type == RegionType.header || region.type == RegionType.footer) return false;
+    if (region.parentRegionId != null &&
+        (region.type == RegionType.label || region.type == RegionType.equation)) {
+      return false;
+    }
+    // A block split at a label is offered as its parts, not as a whole.
+    return !_a.answerSheet.regions
+        .any((PageRegion other) => other.parentRegionId == region.regionId && other.origin == RegionOrigin.derived && other.type == region.type);
+  }
+
+  String _preview(PageRegion region) {
+    final String? text =
+        _a.evidence.handwriting[region.regionId]?.effectiveText ?? region.detectedText;
+    if (text != null && text.trim().isNotEmpty) return text.replaceAll('\n', ' / ');
+    return '[${region.type.displayName.toLowerCase()}]';
+  }
+
+  String _where(PageRegion region) {
+    final String? chosenFor = widget.assignments[region.regionId];
+    if (chosenFor != null) {
+      return chosenFor == widget.questionId
+          ? 'Chosen by you for this question'
+          : 'Chosen by you for question ${_a.questionPaper.byId(chosenFor)?.displayNumber ?? chosenFor}';
+    }
+    if (_a.alignment.preambleRegionIds.contains(region.regionId)) return 'Before the first question';
+    final List<String>? questions = _a.alignment.questionsByRegion[region.regionId];
+    if (questions == null || questions.isEmpty) return 'Not matched to any question';
+    return 'Question ${questions.map((String id) => _a.questionPaper.byId(id)?.displayNumber ?? id).join(', ')}';
+  }
+
+  Widget _tile(PageRegion region) {
+    final String id = region.regionId;
+    return CheckboxListTile(
+      key: ValueKey<String>('choose-$id'),
+      dense: true,
+      value: _selected.contains(id),
+      controlAffinity: ListTileControlAffinity.leading,
+      onChanged: (bool? on) => setState(() => on ?? false ? _selected.add(id) : _selected.remove(id)),
+      title: Text(_preview(region), maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text('Page ${region.pageNumber} · ${_where(region)}'),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final String number = _a.questionPaper.byId(widget.questionId)?.displayNumber ?? widget.questionId;
+    return AlertDialog(
+      title: Text('Choose the answer to question $number'),
+      content: SizedBox(
+        width: 600,
+        height: 460,
+        child: ListView(
+          children: <Widget>[
+            Text(
+              'Tick the writing that answers this question. It is taken away from '
+              'wherever the app put it, and used the next time you re-mark.',
+              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+            ),
+            if (_unmatched.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              Text('Not matched to any question', style: theme.textTheme.titleSmall),
+              for (final PageRegion region in _unmatched) _tile(region),
+            ],
+            const SizedBox(height: 10),
+            Text('Everything else, page by page', style: theme.textTheme.titleSmall),
+            for (final PageRegion region in _others) _tile(region),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('choose-answer-save'),
+          onPressed: () => Navigator.of(context).pop(<String>[
+            for (final PageRegion r in <PageRegion>[..._unmatched, ..._others])
+              if (_selected.contains(r.regionId)) r.regionId,
+          ]),
+          child: const Text('Use as the answer'),
+        ),
+      ],
     );
   }
 }

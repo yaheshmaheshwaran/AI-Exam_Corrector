@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
+import 'package:exam_corrector/models/section_totals.dart';
 import 'package:exam_corrector/state/marked_script.dart';
 
 /// The class at a glance: every student, their mark, and what is left to do.
 ///
 /// Marks shown are the ones that count — the teacher's wherever they changed
-/// one. A row opens that student's questions.
+/// one — with each section's marks beside the total on a paper that has
+/// sections. A row opens that student's questions.
 class ClassResultsView extends StatefulWidget {
   const ClassResultsView({
     super.key,
@@ -44,6 +46,11 @@ class _ClassResultsViewState extends State<ClassResultsView> {
     final int toReview = widget.scripts
         .where((MarkedScript s) => s.status == ScriptStatus.reviewRequired)
         .length;
+    // The whole class sits the same paper, so its sections come from any
+    // marked script.
+    final List<String?> sections = marked.isEmpty
+        ? const <String?>[]
+        : <String?>[for (final SectionTotal t in marked.first.sectionTotals) t.sectionId];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -66,23 +73,42 @@ class _ClassResultsViewState extends State<ClassResultsView> {
         ),
         const SizedBox(height: 10),
         Expanded(
-          child: Scrollbar(
-            controller: _scroll,
-            thumbVisibility: true,
-            child: ListView.builder(
-              controller: _scroll,
-              padding: const EdgeInsets.only(right: 10),
-              itemCount: widget.scripts.length,
-              itemBuilder: (BuildContext context, int index) {
-                final MarkedScript script = widget.scripts[index];
-                return _Row(
-                  key: ValueKey<String>('script-row-$index'),
-                  script: script,
-                  onOpen: () => widget.onOpen(index),
-                  onRemove: widget.onRemove == null ? null : () => widget.onRemove!(index),
-                );
-              },
-            ),
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              // A column per section while they fit; a line under the name
+              // when they do not.
+              final bool columns = sections.isNotEmpty &&
+                  constraints.maxWidth >= 440 + _Row.sectionWidth * sections.length;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (columns)
+                    _Header(sections: sections, removable: widget.onRemove != null),
+                  Expanded(
+                    child: Scrollbar(
+                      controller: _scroll,
+                      thumbVisibility: true,
+                      child: ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.only(right: 10),
+                        itemCount: widget.scripts.length,
+                        itemBuilder: (BuildContext context, int index) {
+                          final MarkedScript script = widget.scripts[index];
+                          return _Row(
+                            key: ValueKey<String>('script-row-$index'),
+                            script: script,
+                            sections: sections,
+                            columns: columns,
+                            onOpen: () => widget.onOpen(index),
+                            onRemove: widget.onRemove == null ? null : () => widget.onRemove!(index),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
         if (widget.scripts.any((MarkedScript s) => s.status == ScriptStatus.failed))
@@ -99,12 +125,62 @@ class _ClassResultsViewState extends State<ClassResultsView> {
   }
 }
 
+/// Names the columns when the sections have columns of their own.
+class _Header extends StatelessWidget {
+  const _Header({required this.sections, required this.removable});
+
+  final List<String?> sections;
+  final bool removable;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextStyle? style = Theme.of(context)
+        .textTheme
+        .bodySmall
+        ?.copyWith(color: AppTheme.textSecondary, fontWeight: FontWeight.w600);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 22, 4),
+      child: Row(
+        children: <Widget>[
+          Expanded(child: Text('Student', style: style)),
+          SizedBox(width: _Row.statusWidth, child: Text('Status', style: style)),
+          for (final String? id in sections)
+            SizedBox(
+              width: _Row.sectionWidth,
+              child: Text(id == null ? 'Other' : 'Section $id', textAlign: TextAlign.right, style: style),
+            ),
+          SizedBox(width: 110, child: Text('Total', textAlign: TextAlign.right, style: style)),
+          const SizedBox(width: 56),
+          if (removable) const SizedBox(width: 40),
+          const SizedBox(width: 18),
+        ],
+      ),
+    );
+  }
+}
+
 class _Row extends StatelessWidget {
-  const _Row({super.key, required this.script, required this.onOpen, this.onRemove});
+  const _Row({
+    super.key,
+    required this.script,
+    required this.onOpen,
+    this.onRemove,
+    this.sections = const <String?>[],
+    this.columns = false,
+  });
 
   final MarkedScript script;
   final VoidCallback onOpen;
   final VoidCallback? onRemove;
+
+  /// The paper's sections, in order.
+  final List<String?> sections;
+
+  /// Each section in a column of its own, rather than a line under the name.
+  final bool columns;
+
+  static const double sectionWidth = 72;
+  static const double statusWidth = 92;
 
   @override
   Widget build(BuildContext context) {
@@ -118,6 +194,7 @@ class _Row extends StatelessWidget {
       ScriptStatus.waiting => AppTheme.textSecondary,
     };
     final double? total = script.finalTotal;
+    final List<SectionTotal> totals = script.sectionTotals;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -135,10 +212,21 @@ class _Row extends StatelessWidget {
             child: Row(
               children: <Widget>[
                 Expanded(
-                  child: Text(
-                    script.document.fileName,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        script.document.fileName,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      if (!columns && totals.isNotEmpty)
+                        Text(
+                          totals.map((SectionTotal t) => '${t.shortName} ${formatMarks(t.awarded)}').join('  ·  '),
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                        ),
+                    ],
                   ),
                 ),
                 if (status == ScriptStatus.processing)
@@ -150,8 +238,24 @@ class _Row extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 1.8),
                     ),
                   ),
-                Text(status.label, style: TextStyle(fontSize: 12, color: colour)),
-                const SizedBox(width: 16),
+                SizedBox(
+                  width: columns ? statusWidth : null,
+                  child: Text(status.label, style: TextStyle(fontSize: 12, color: colour)),
+                ),
+                if (!columns) const SizedBox(width: 16),
+                if (columns)
+                  for (final String? id in sections)
+                    SizedBox(
+                      width: sectionWidth,
+                      child: Text(
+                        switch (totals.where((SectionTotal t) => t.sectionId == id).firstOrNull) {
+                          final SectionTotal t => '${formatMarks(t.awarded)}/${formatMarks(t.maximum)}',
+                          null => '—',
+                        },
+                        textAlign: TextAlign.right,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
                 SizedBox(
                   width: 110,
                   child: Text(
