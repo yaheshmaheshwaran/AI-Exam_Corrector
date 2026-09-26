@@ -15,22 +15,26 @@ class CorrectionProgress extends StatelessWidget {
     required this.onCorrect,
     this.isTranscribing = false,
     this.transcriptionProgress = 0,
+    this.onCancel,
+    this.correctLabel = 'Correct paper',
   });
+
+  final String correctLabel;
+
+  /// Offered in place of the correct button while processing runs.
+  final VoidCallback? onCancel;
 
   final String statusMessage;
   final bool isError;
   final bool isCorrecting;
   final VoidCallback? onCorrect;
 
-  /// True while handwriting is being recognised.
+  /// True while the pipeline is running.
   final bool isTranscribing;
 
-  /// How far recognition has got, 0..1.
-  ///
-  /// Recognition is the one operation here whose remaining time is knowable —
-  /// pages and lines are counted up front — so it gets a determinate bar rather
-  /// than the indeterminate one marking uses. Over several minutes that is the
-  /// difference between waiting and wondering whether it has hung.
+  /// How far processing has got, 0..1. Pages and stages are counted up front,
+  /// so the bar is determinate: over several minutes that is the difference
+  /// between waiting and wondering whether it has hung.
   final double transcriptionProgress;
 
   @override
@@ -77,20 +81,18 @@ class CorrectionProgress extends StatelessWidget {
             ),
             const SizedBox(width: AppTheme.gap),
           ],
-          FilledButton.icon(
-            onPressed: onCorrect,
-            icon: isCorrecting
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.play_arrow_rounded, size: 18),
-            label: Text(isCorrecting ? 'Marking…' : 'Correct paper'),
-          ),
+          if (onCancel != null)
+            OutlinedButton.icon(
+              onPressed: onCancel,
+              icon: const Icon(Icons.stop_circle_outlined, size: 16),
+              label: const Text('Cancel'),
+            )
+          else
+            FilledButton.icon(
+              onPressed: onCorrect,
+              icon: const Icon(Icons.play_arrow_rounded, size: 18),
+              label: Text(correctLabel),
+            ),
         ],
       ),
     );

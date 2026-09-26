@@ -10,6 +10,7 @@ this module.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 from dataclasses import dataclass
@@ -43,6 +44,18 @@ class LineTranscription:
     text: str
     confidence: float
     crop_path: str
+
+
+@dataclass
+class CropReading:
+    """What the recogniser made of one crop, word by word."""
+
+    text: str
+    confidence: float
+    # (word, confidence) in reading order. A word's confidence is the geometric
+    # mean probability of its own tokens, so one smudged word shows up as an
+    # uncertain span instead of dragging down the whole line.
+    words: list[tuple[str, float]]
 
 
 @dataclass
@@ -127,22 +140,38 @@ def recognize_lines(
         crops.append(Image.fromarray(rgb))
         crop_paths.append(path)
 
-    results: list[LineTranscription] = []
+    readings = read_crops(
+        crops,
+        model_name=model_name,
+        batch_size=batch_size,
+        on_progress=on_progress,
+    )
+    return [
+        LineTranscription(
+            text=reading.text,
+            confidence=reading.confidence,
+            crop_path=crop_paths[index],
+        )
+        for index, reading in enumerate(readings)
+    ]
+
+
+def read_crops(
+    crops: list[Image.Image],
+    model_name: str = DEFAULT_MODEL,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    on_progress: ProgressFn | None = None,
+) -> list[CropReading]:
+    """Reads single-line crops, returning text, confidence and word scores."""
+    if not crops:
+        return []
+    loaded = load_model(model_name)
+    results: list[CropReading] = []
     total = len(crops)
 
     for start in range(0, total, batch_size):
         batch = crops[start : start + batch_size]
-        texts, confidences = _transcribe_batch(loaded, batch)
-
-        for offset, (text, confidence) in enumerate(zip(texts, confidences)):
-            results.append(
-                LineTranscription(
-                    text=text,
-                    confidence=confidence,
-                    crop_path=crop_paths[start + offset],
-                )
-            )
-
+        results.extend(_transcribe_batch(loaded, batch))
         if on_progress is not None:
             on_progress(min(start + batch_size, total), total)
 
@@ -153,7 +182,7 @@ def recognize_lines(
 def _transcribe_batch(
     loaded: _LoadedModel,
     crops: list[Image.Image],
-) -> tuple[list[str], list[float]]:
+) -> list[CropReading]:
     processor = loaded.processor
     model = loaded.model
 
@@ -174,8 +203,78 @@ def _transcribe_batch(
 
     texts = processor.batch_decode(output.sequences, skip_special_tokens=True)
     confidences = _sequence_confidences(model, processor, output)
+    words = _sequence_words(model, processor, output)
 
-    return [text.strip() for text in texts], confidences
+    return [
+        CropReading(text=text.strip(), confidence=confidence, words=word_scores)
+        for text, confidence, word_scores in zip(texts, confidences, words)
+    ]
+
+
+def _sequence_words(model, processor, output) -> list[list[tuple[str, float]]]:
+    """Per-word confidences for each sequence in the batch."""
+    scores = model.compute_transition_scores(
+        output.sequences, output.scores, normalize_logits=True
+    )
+    generated = output.sequences[:, 1:][:, : scores.shape[1]]
+    tokenizer = processor.tokenizer
+    special = set(getattr(tokenizer, "all_special_ids", []) or [])
+
+    results: list[list[tuple[str, float]]] = []
+    for row in range(generated.shape[0]):
+        pieces: list[str] = []
+        log_probs: list[float] = []
+        for step in range(generated.shape[1]):
+            token_id = int(generated[row, step])
+            if token_id in special:
+                continue
+            value = float(scores[row, step])
+            if not math.isfinite(value):
+                value = 0.0
+            pieces.append(tokenizer.convert_ids_to_tokens(token_id))
+            log_probs.append(value)
+        results.append(
+            words_from_tokens(pieces, log_probs, tokenizer.convert_tokens_to_string)
+        )
+    return results
+
+
+# The marker BPE tokenisers put on a token that starts a new word.
+_WORD_START = ("\u0120", "\u2581", " ")
+
+
+def words_from_tokens(
+    pieces: list[str],
+    log_probs: list[float],
+    to_text: Callable[[list[str]], str] | None = None,
+) -> list[tuple[str, float]]:
+    """Groups BPE tokens into words, scoring each word by its own tokens.
+
+    Pure: tested with hand-built tokens rather than a model.
+    """
+    if to_text is None:
+        to_text = lambda tokens: "".join(tokens).replace("\u0120", " ")  # noqa: E731
+
+    words: list[tuple[str, float]] = []
+    current: list[str] = []
+    current_scores: list[float] = []
+
+    def flush() -> None:
+        if not current:
+            return
+        text = to_text(current).strip()
+        if text:
+            mean = sum(current_scores) / len(current_scores)
+            words.append((text, max(0.0, min(1.0, math.exp(mean)))))
+
+    for piece, score in zip(pieces, log_probs):
+        if current and piece.startswith(_WORD_START):
+            flush()
+            current, current_scores = [], []
+        current.append(piece)
+        current_scores.append(score)
+    flush()
+    return words
 
 
 def _sequence_confidences(model, processor, output) -> list[float]:

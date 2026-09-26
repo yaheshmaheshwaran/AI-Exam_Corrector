@@ -4,6 +4,7 @@
 # macOS / IDE noise
 .DS_Store
 .idea/
+.claude/
 
 # Flutter / Dart
 .dart_tool/
@@ -25,3 +26,7 @@ __pycache__/
 # A regenerable preview of the handwritten sample. The PDF beside it is the
 # fixture and is committed; this is just for looking at.
 sample/student_paper_handwritten.png
+
+# The sidecar's packaging output (ocr_service/packaging/build_sidecar.py).
+ocr_service/build/
+ocr_service/dist/

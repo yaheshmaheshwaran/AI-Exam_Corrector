@@ -1,8 +1,9 @@
-# Handwriting OCR sidecar
+# Local document-understanding sidecar
 
-Reads handwritten exam scripts so the application can mark them. It runs as a
-child process of the Flutter app, bound to loopback, and is started on demand —
-the first time a teacher opens a scan, never at launch.
+Renders exam scripts, analyses their page layout, and reads handwriting region
+by region, so the application can understand a script before it is marked. It
+runs as a child process of the Flutter app, bound to loopback, and is started on
+demand — the first time a paper needs rendering, never at launch.
 
 The app finds this automatically during development. If you have not set the
 environment up, choosing a scanned paper reports *"The handwriting recogniser is
@@ -42,37 +43,43 @@ RoBERTa BPE files with no `tokenizer.json`, and transformers 5 dropped the
 slow-to-fast conversion path they depend on — `from_pretrained` fails outright
 there, with or without `sentencepiece` installed.
 
-## The pipeline
+## The engines
 
 ```
 PDF or photograph
    │
-   ├─ rasterize.py    PyMuPDF → one page image per page, at the requested dpi
-   ├─ preprocess.py   deskew (projection profile), denoise, even out contrast
-   ├─ detect.py       docTR DBNet word boxes, grouped into text lines
-   ├─ recognize.py    TrOCR reads each line crop, and scores its own confidence
-   └─ assemble.py     reading order, page markers, the response document
+   ├─ rasterize.py   PyMuPDF, one page at a time — never the whole document in memory
+   ├─ preprocess.py  deskew (projection profile), denoise, even out contrast
+   ├─ analyze.py     stage one: ink coverage and blank pages, ignoring exercise-book ruling
+   ├─ render.py      writes the original, the cleaned page, and a preview for vision models
+   ├─ detect.py      docTR DBNet word boxes (projection-profile fallback)
+   ├─ layout.py      words → lines → blocks; graphics → table / graph / diagram;
+   │                 strikes, question numbers, margins, headers, reading order
+   ├─ recognize.py   TrOCR, with line and per-word confidence from token probabilities
+   └─ regions.py     reads each region line by line and returns it whole; crops
 ```
 
-Two details carry more weight than their size suggests.
+Three details carry more weight than their size suggests.
 
-**Detection is the accuracy ceiling.** TrOCR is a *single-line* recogniser: it
-turns one cropped line into one string and has no notion of layout. Everything
-it can do depends on `detect.py` handing it well-formed lines. A classical
-projection-profile detector stands behind DBNet so a machine that cannot reach
-the weights still produces a usable result instead of failing.
+**Layout decides what gets read, and as what.** A paragraph, a margin question
+number, a diagram's labels and a crossed-out line are separate regions, so
+nothing is glued to the text beside it just because it shares a baseline. Blocks
+split on gaps, on a change in writing size (printed question text versus the
+student's hand), and on indentation. What layout cannot establish it says so:
+a page with graphics or unexplained ink is reported `needs_vision`, and the app
+sends that page to a vision model. It never guesses printed versus handwritten.
 
 **Confidence is derived, not reported.** TrOCR has no confidence output. It is
-computed in `recognize.py` as the geometric mean of the decoder's per-token
-probabilities — length-independent, so a two-word line and a twenty-word line
-are comparable. That single number decides which lines get a second opinion from
-the vision model, which the review screen highlights, and which reach the
-teacher as a warning.
+computed in `recognize.py` from the decoder's token log-probabilities — per line
+as a geometric mean, and per word from that word's own tokens, so one smudged
+word is an uncertain span rather than a weak line. On a scanned script correctly
+read prose scores 0.97–1.00, while misread symbols (`+` as `t`, `=` as `-`)
+score well below; the app's default threshold is 0.92.
 
-Measured on a scanned script, that number separates cleanly: correctly read
-prose lands at 0.97–1.00, while every line TrOCR got wrong — `+` read as `t`,
-`=` as `-`, `100 / 0.05` as `( 100 ) 0.05` — landed between 0.77 and 0.91. The
-app's default threshold of 0.92 sits in that gap.
+**Crossed-out detection is conservative.** A strike is a long, near-straight
+horizontal run of ink through the middle of a line. A fraction bar can pass that
+test, so the confidence stays at 0.5 and the app keeps such a line in the answer
+with a flag rather than discarding it.
 
 ## HTTP interface
 
@@ -83,19 +90,46 @@ given, so without that check any local process could use it to read files.
 | Route | Purpose |
 |---|---|
 | `GET /health` | Readiness, device, which models are resident |
-| `POST /warmup` | Loads the weights ahead of the first document |
-| `POST /extract` | Streams progress, then the transcript, as server-sent events |
+| `POST /warmup` | Loads the recognition weights ahead of the first document |
+| `POST /render` | `{path, out_dir, dpi, preview_max_dim}` → streams progress, then every page: image paths, size, text-layer flag and text, ink coverage, blank |
+| `POST /layout` | `{pages: [{index, image_path}]}` → streams progress, then typed regions per page, with lines, word boxes, reading order and `needs_vision` |
+| `POST /recognize` | `{pages: [{index, image_path, regions}], crops_dir, model, uncertain_below}` → streams progress, then one reading per region with lines and uncertain spans |
+| `POST /crop` | `{image_path, out_dir, max_dim, regions: [{region_id, box}]}` → crop paths |
 | `POST /shutdown` | Exits cleanly when the app closes |
 
-`/extract` takes `{path, dpi, model, workdir}` and streams
-`{"type": "progress" | "done" | "error", …}`. Page images and line crops are
-written under `workdir` and left there: the review screen reads them back to
-show each line beside the strip of page it came from.
+Streaming routes send server-sent events: `{"type": "progress" | "done" |
+"error", …}`. Errors are events, not HTTP failures, so a page that cannot be
+rendered is named (`"page": 7`). Output files are written where the app says —
+its cache — and left there.
+
+## Packaging
+
+```bash
+uv pip install --python .venv/bin/python -r requirements-build.txt
+.venv/bin/python packaging/build_sidecar.py              # build, then smoke-test
+.venv/bin/python packaging/build_sidecar.py --skip-build # smoke-test only
+```
+
+PyInstaller builds `dist/exam-corrector-ocr/` from `packaging/exam-corrector-ocr.spec`
+— a windowed executable (no console pops up when the app starts it) plus its
+libraries, about 830 MB, most of it PyTorch. The smoke test starts the built
+binary and drives `/health`, `/render`, `/layout` and `/recognize`, so a missing
+hidden import fails the build rather than a teacher's first scan. Weights are
+not bundled. Build on the platform you ship for: a Windows build must be made on
+Windows. `flutter build windows` then copies the folder beside the app.
+
+## Shutdown
+
+The app stops the sidecar through `/shutdown` when its window closes. For the
+cases where that cannot happen — the app killed, or crashing — it passes
+`--parent-pid`, and `pipeline/watchdog.py` exits the sidecar within a couple of
+seconds of the app disappearing (using `OpenProcess` on Windows, where probing a
+process with a signal is unsafe).
 
 ## Running it by hand
 
 ```bash
-# The whole pipeline over one file, with per-line confidences.
+# Render, layout and region recognition over one file, as the app drives them.
 .venv/bin/python tools/run_pipeline.py ../sample/student_paper_handwritten.pdf
 
 # Build a scanned-looking handwritten paper to test against.
@@ -115,7 +149,9 @@ way to tell a model problem from a backend one.
 .venv/bin/python -m pytest tests/ -v
 ```
 
-Offline and fast — no weights are loaded. Line grouping is tested as pure
-geometry, deskew against known rotations, and the confidence arithmetic against
-hand-built tensors, so the parts that are easy to get subtly wrong are pinned
-down without waiting on a model.
+Offline and fast — no weights are loaded. Layout is tested on synthetic pages
+(text blocks, margin numbers, diagrams with labels, tables, graphs, strikes,
+ruling, blank pages), rendering on generated mixed PDFs, region recognition and
+word confidences with stub readers, deskew against known rotations, confidence
+arithmetic against hand-built tensors, and the HTTP endpoints through FastAPI's
+test client.

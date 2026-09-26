@@ -4,8 +4,12 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import 'package:exam_corrector/core/async/cancellation.dart';
 import 'package:exam_corrector/core/constants/app_constants.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
+
+/// Which allowance a rate-limited request ran into.
+enum QuotaWindow { perMinute, perDay, unknown }
 
 /// What a streamed interaction amounted to: its text, and how it ended.
 class InteractionOutcome {
@@ -70,8 +74,14 @@ class GeminiClient {
     void Function(String message)? onProgress,
     bool canSwitchModel = false,
     String retryingMessage = 'Retrying…',
+    String endpoint = AppConstants.apiEndpoint,
+    Duration idleTimeout = AppConstants.apiIdleTimeout,
+    int? maxRetries,
+    CancellationToken? cancel,
   }) async {
+    final int retries = maxRetries ?? _retryDelays.length;
     for (int attempt = 0;; attempt++) {
+      cancel?.throwIfCancelled();
       try {
         if (attempt > 0) onProgress?.call(retryingMessage);
         return await send(
@@ -82,9 +92,12 @@ class GeminiClient {
           responseSchema: responseSchema,
           maxTokens: maxTokens,
           effort: effort,
+          endpoint: endpoint,
+          idleTimeout: idleTimeout,
+          cancel: cancel,
         );
       } on CorrectionException catch (error) {
-        if (!error.transient || attempt >= _retryDelays.length) rethrow;
+        if (!error.transient || attempt >= retries) rethrow;
         if (error.quotaExhausted && canSwitchModel) rethrow;
 
         // A rate limit comes with the exact wait the API wants; a fixed short
@@ -104,7 +117,9 @@ class GeminiClient {
   /// A second of headroom is added so the retry clears the window rather than
   /// landing exactly on its edge.
   Duration waitFor(CorrectionException error, int attempt) {
-    final Duration scheduled = _retryDelays[attempt];
+    final Duration scheduled = _retryDelays.isEmpty
+        ? Duration.zero
+        : _retryDelays[attempt.clamp(0, _retryDelays.length - 1)];
     final Duration? requested = error.retryAfter;
     if (requested == null) return scheduled;
 
@@ -126,13 +141,22 @@ class GeminiClient {
     required Map<String, Object?> responseSchema,
     required int maxTokens,
     required String effort,
+    String endpoint = AppConstants.apiEndpoint,
+    Duration idleTimeout = AppConstants.apiIdleTimeout,
+    CancellationToken? cancel,
   }) async {
     final http.Client client = _injectedClient ?? http.Client();
+    // Closing the client is the only way to abandon a streaming response.
+    // An injected client is shared, so it is left alone and the stream is
+    // abandoned at the next chunk instead.
+    final void Function()? unregister = cancel?.onCancel(() {
+      if (_injectedClient == null) client.close();
+    });
 
     try {
       final http.Request request = http.Request(
         'POST',
-        Uri.parse('${AppConstants.apiEndpoint}?alt=sse'),
+        Uri.parse('$endpoint?alt=sse'),
       );
       request.headers.addAll(<String, String>{
         'content-type': 'application/json',
@@ -142,7 +166,7 @@ class GeminiClient {
       request.body = jsonEncode(<String, Object?>{
         'model': model,
         'stream': true,
-        // Stateless: the paper and mark scheme are not kept by the service.
+        // Stateless: exam papers are not kept by the service.
         'store': false,
         'system_instruction': systemInstruction,
         'input': input,
@@ -168,8 +192,14 @@ class GeminiClient {
         );
       }
 
-      return await readStream(response.stream);
+      return await readStream(
+        response.stream,
+        idleTimeout: idleTimeout,
+        cancel: cancel,
+      );
     } on CorrectionException {
+      rethrow;
+    } on CancelledException {
       rethrow;
     } on TimeoutException {
       throw const CorrectionException(
@@ -182,6 +212,9 @@ class GeminiClient {
         'Could not reach the API. Check your internet connection and try again.',
       );
     } on http.ClientException {
+      // Closing the client is how cancellation abandons a request, and it
+      // surfaces here as a dropped connection.
+      if (cancel?.isCancelled ?? false) throw const CancelledException();
       throw const CorrectionException(
         'The connection to the API was lost before it finished. Please try '
         'again.',
@@ -192,6 +225,7 @@ class GeminiClient {
         'The API sent a response this application could not read.',
       );
     } finally {
+      unregister?.call();
       if (_injectedClient == null) client.close();
     }
   }
@@ -200,17 +234,22 @@ class GeminiClient {
   ///
   /// Only `text` deltas are kept: thought summaries arrive on the same stream
   /// and must never reach the JSON parser.
-  Future<InteractionOutcome> readStream(http.ByteStream body) async {
+  Future<InteractionOutcome> readStream(
+    http.ByteStream body, {
+    Duration idleTimeout = AppConstants.apiIdleTimeout,
+    CancellationToken? cancel,
+  }) async {
     final StringBuffer text = StringBuffer();
     String? status;
     String? incompleteReason;
 
     final Stream<String> lines = body
-        .timeout(AppConstants.apiIdleTimeout)
+        .timeout(idleTimeout)
         .transform(utf8.decoder)
         .transform(const LineSplitter());
 
     await for (final String line in lines) {
+      cancel?.throwIfCancelled();
       if (!line.startsWith('data:')) continue;
 
       final String data = line.substring(5).trim();
@@ -337,13 +376,17 @@ class GeminiClient {
           'shorter paper.',
         );
       case 429:
-        // Retried first (the window may be short), then treated as an empty
-        // allowance so the caller can move to the next model.
+        // A per-minute limit clears by itself: wait and retry the same model,
+        // rather than burning through the chain because several requests
+        // arrived at once. A daily allowance does not come back today, so the
+        // caller moves to the next model. When the API does not say which it
+        // is, retry briefly, then move on.
+        final QuotaWindow window = quotaWindow(body);
         return CorrectionException(
-          rateLimitMessage(detail, retryAfter, model),
+          rateLimitMessage(detail, retryAfter, model, window: window),
           transient: true,
           retryAfter: retryAfter,
-          quotaExhausted: true,
+          quotaExhausted: window != QuotaWindow.perMinute,
         );
       case 503:
         return const CorrectionException(
@@ -379,15 +422,36 @@ class GeminiClient {
     return CorrectionException('The API returned an error: $detail');
   }
 
+  /// Which quota a 429 hit, from the `quotaId` of each violation Gemini
+  /// reports (`GenerateRequestsPerMinutePerProjectPerModel-FreeTier`, …).
+  static QuotaWindow quotaWindow(String body) {
+    final Iterable<String> ids = RegExp(r'"quotaId"\s*:\s*"([^"]+)"')
+        .allMatches(body)
+        .map((RegExpMatch match) => match.group(1)!);
+    if (ids.any((String id) => id.contains('PerDay'))) return QuotaWindow.perDay;
+    if (ids.any((String id) => id.contains('PerMinute'))) return QuotaWindow.perMinute;
+    return QuotaWindow.unknown;
+  }
+
   /// Explains a rate limit in terms the teacher can act on: which model ran out
   /// of quota, and how long until it is worth trying again.
-  String rateLimitMessage(String detail, Duration? retryAfter, String model) {
-    final StringBuffer message = StringBuffer(
-      detail.toLowerCase().contains('free_tier') ||
-              detail.toLowerCase().contains('free tier')
+  String rateLimitMessage(
+    String detail,
+    Duration? retryAfter,
+    String model, {
+    QuotaWindow window = QuotaWindow.unknown,
+  }) {
+    final bool freeTier = detail.toLowerCase().contains('free_tier') ||
+        detail.toLowerCase().contains('free tier');
+    final StringBuffer message = StringBuffer(switch (window) {
+      QuotaWindow.perMinute =>
+        'Too many requests reached $model at once (its per-minute limit).',
+      QuotaWindow.perDay => 'The daily ${freeTier ? 'free-tier ' : ''}quota for '
+          '$model has run out.',
+      QuotaWindow.unknown => freeTier
           ? 'The free-tier quota for $model has run out.'
           : 'The API rate limit for $model was reached.',
-    );
+    });
 
     if (retryAfter != null) {
       message.write(' Try again in about ${retryAfter.inSeconds} seconds.');

@@ -1,36 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/app/app.dart';
 import 'package:exam_corrector/core/config/app_config.dart';
-import 'package:exam_corrector/services/settings_store.dart';
+import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
 import '../state/fakes.dart';
-
-const String _answerPath = 'C:\\papers\\answers.pdf';
-const String _questionPath = 'C:\\papers\\questions.pdf';
-
-CorrectionController _controller({
-  FakePdfService? pdfService,
-  FakeCorrectionService? correctionService,
-  AppConfig config = configuredApp,
-  SettingsStore? settings,
-}) {
-  return CorrectionController(
-    config: config,
-    correctionService: correctionService ?? FakeCorrectionService(),
-    pdfService: pdfService ??
-        FakePdfService(
-          textByPath: const <String, String>{
-            _answerPath: '1. The mitochondrion makes ATP.',
-            _questionPath: 'SECTION A\n1. Name the organelle. [2 marks]',
-          },
-        ),
-    filePicker: FakeFilePicker(_answerPath, _questionPath),
-    settings: settings ?? RecordingSettingsStore(),
-  );
-}
 
 /// Fills both document slots by tapping the two Choose buttons in order.
 Future<void> _chooseBoth(WidgetTester tester) async {
@@ -40,140 +18,204 @@ Future<void> _chooseBoth(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _correct(WidgetTester tester) async {
+  await tester.tap(find.text('Correct paper'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _sized(WidgetTester tester, [Size size = const Size(1280, 900)]) async {
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+}
+
 void main() {
   testWidgets('walks the teacher from upload to marks', (WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _sized(tester);
+    await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
 
-    await tester.pumpWidget(ExamCorrectorApp(controller: _controller()));
-
-    // The four workflow steps are on screen, and nothing is marked yet.
     expect(find.text("1. Student's answer sheet"), findsOneWidget);
     expect(find.text('2. Question paper'), findsOneWidget);
     expect(find.text('3. Marking guidance (optional)'), findsOneWidget);
     expect(find.text('4. Correction result'), findsOneWidget);
     expect(find.text('Correction results will appear here.'), findsOneWidget);
 
-    // Correction is unavailable until both documents exist.
     FilledButton correctButton() =>
         tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Correct paper'));
     expect(correctButton().onPressed, isNull);
 
-    // Step 1 — the answer sheet alone is not enough.
     await tester.tap(find.text('Choose…').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('answers.pdf'), findsOneWidget);
+    expect(find.textContaining('answers.pdf'), findsWidgets);
+    expect(find.textContaining('scanned — handwriting will be read'), findsOneWidget);
     expect(correctButton().onPressed, isNull);
 
-    // Step 2 — the question paper arms it, with no guidance typed.
     await tester.tap(find.text('Choose…').last);
     await tester.pumpAndSettle();
-    expect(find.textContaining('questions.pdf'), findsOneWidget);
     expect(correctButton().onPressed, isNotNull);
 
-    // Step 4 — correct.
-    await tester.tap(find.text('Correct paper'));
-    await tester.pumpAndSettle();
+    await _correct(tester);
 
-    // Marks, reasoning and marking points for the question.
+    // Grouped by question, with marks, review flags and the total.
     expect(find.text('Question 1'), findsOneWidget);
-    expect(find.text('1 / 2'), findsOneWidget);
-    expect(find.textContaining('Maximum marks: 2'), findsOneWidget);
-    expect(find.text('Names ATP  (1)'), findsOneWidget);
-    expect(find.text('Identifies the site'), findsOneWidget);
-    expect(find.text('The mitochondrion makes ATP.'), findsOneWidget);
-    expect(find.text('Names ATP but omits the site.'), findsOneWidget);
-
-    // The total and the percentage.
-    expect(find.text('Total marks: 1 / 2'), findsOneWidget);
+    expect(find.text('Question 2'), findsOneWidget);
+    expect(find.text('1 / 2'), findsNWidgets(2));
+    expect(find.text('Review'), findsOneWidget);
+    expect(find.text('Total marks: 2 / 4'), findsOneWidget);
     expect(find.text('Percentage: 50%'), findsOneWidget);
-    expect(find.text('Marked 1 question: 1 / 2 (50%).'), findsOneWidget);
-    // Which model produced the marks, since a quota fallback can change it.
-    expect(find.text('Marked by gemini-3.6-flash'), findsOneWidget);
+    expect(find.textContaining('Marked by gemini-3.6-flash'), findsOneWidget);
+    expect(find.text('Marked 2 questions: 2 / 4 (50%). 1 need your review.'), findsOneWidget);
   });
 
-  testWidgets('shows a correction failure in a dialog', (WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('opens a question with its evidence, and takes an override',
+      (WidgetTester tester) async {
+    await _sized(tester, const Size(1400, 1000));
+    final CorrectionController controller = fakeController();
+    await tester.pumpWidget(ExamCorrectorApp(controller: controller));
+    await _chooseBoth(tester);
+    await _correct(tester);
 
-    await tester.pumpWidget(
-      ExamCorrectorApp(
-        controller: _controller(
-          correctionService: FakeCorrectionService(
-            error: 'The API key was rejected. Check GEMINI_API_KEY.',
-          ),
+    await tester.tap(find.byKey(const ValueKey<String>('question-row-Q1')));
+    await tester.pumpAndSettle();
+
+    // The question, the student's answer as read, and the marking.
+    expect(find.text('Name the organelle that makes ATP.'), findsOneWidget);
+    expect(find.text('Student answer'), findsOneWidget);
+    expect(find.text('Recognised text'), findsOneWidget);
+    expect(find.textContaining('1 The mitochondrion makes'), findsOneWidget);
+    expect(find.text('Marking points'), findsOneWidget);
+    expect(find.text('Names ATP'), findsOneWidget);
+    expect(find.text('1/1'), findsOneWidget);
+    expect(find.text('0/1'), findsOneWidget);
+    expect(find.text('Names ATP but omits the site.'), findsOneWidget);
+    expect(find.text('Confidence: 90%'), findsOneWidget);
+    // Evidence points at the region on the page.
+    expect(find.text('Page 1 → Region 1'), findsOneWidget);
+
+    await tester.tap(find.text('Page 1 → Region 1'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Page 1 → Region 1 (handwritten answer)'), findsOneWidget);
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+
+    // The teacher's mark replaces the AI's in the total; the AI's is kept.
+    await tester.enterText(find.byKey(const Key('teacher-mark')), '2');
+    await tester.enterText(find.byKey(const Key('teacher-comment')), 'Site implied.');
+    await tester.tap(find.byKey(const Key('save-mark')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('You changed the mark from 1 to 2.'), findsOneWidget);
+    expect(find.text('AI 1 → yours'), findsOneWidget);
+    expect(controller.result!.question('Q1')!.awardedMarks, 1);
+
+    await tester.tap(find.byTooltip('Back to the results'));
+    await tester.pumpAndSettle();
+    expect(find.text('Total marks: 3 / 4'), findsOneWidget);
+    expect(find.text('Changed'), findsOneWidget);
+    expect(find.textContaining('1 changed by you · AI total 2'), findsOneWidget);
+  });
+
+  testWidgets('a teacher can correct a transcription from the question', (WidgetTester tester) async {
+    await _sized(tester, const Size(1400, 1000));
+    final CorrectionController controller = fakeController();
+    await tester.pumpWidget(ExamCorrectorApp(controller: controller));
+    await _chooseBoth(tester);
+    await _correct(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('question-row-Q2')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Correct transcription'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('transcription-field')), '2 Because they respire.');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(controller.hasPendingCorrections, isTrue);
+    await tester.tap(find.byTooltip('Back to the results'));
+    await tester.pumpAndSettle();
+    expect(find.text('Transcriptions were corrected'), findsOneWidget);
+
+    await tester.tap(find.text('Re-mark'));
+    await tester.pumpAndSettle();
+    expect(controller.hasPendingCorrections, isFalse);
+  });
+
+  testWidgets('shows processing as it happens, and can cancel it', (WidgetTester tester) async {
+    await _sized(tester);
+    final FakeMarker marker = FakeMarker(gate: Completer<void>());
+    final CorrectionController controller = fakeController(marker: marker);
+    await tester.pumpWidget(ExamCorrectorApp(controller: controller));
+    await _chooseBoth(tester);
+
+    await tester.tap(find.text('Correct paper'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Current stage'), findsOneWidget);
+    expect(find.text('Marking'), findsWidgets);
+    expect(find.text('Questions: 2'), findsOneWidget);
+    expect(find.text('Handwriting regions: 2'), findsOneWidget);
+    expect(find.text('Pages'), findsOneWidget);
+    expect(find.byKey(const Key('processing-progress')), findsOneWidget);
+
+    await tester.tap(find.text('Cancel').last);
+    marker.gate!.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('resumes where it stopped'), findsOneWidget);
+    expect(find.text('Current stage'), findsNothing);
+  });
+
+  testWidgets('shows a failure in a dialog', (WidgetTester tester) async {
+    await _sized(tester);
+    await tester.pumpWidget(ExamCorrectorApp(
+      controller: fakeController(
+        marker: FakeMarker(
+          error: const CorrectionException('The API key was rejected. Check GEMINI_API_KEY.'),
         ),
       ),
-    );
-
+    ));
     await _chooseBoth(tester);
-    await tester.tap(find.text('Correct paper'));
-    await tester.pumpAndSettle();
+    await _correct(tester);
 
     expect(find.text('Correction could not continue'), findsOneWidget);
     expect(
-      find.text('The API key was rejected. Check GEMINI_API_KEY.'),
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('The API key was rejected. Check GEMINI_API_KEY.'),
+      ),
       findsOneWidget,
     );
-
     await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
 
-    // Dismissed, and the teacher can try again.
-    expect(find.text('Correction could not continue'), findsNothing);
-    expect(find.text('Correction failed.'), findsOneWidget);
+    // Everything read from the paper is kept, and marking can resume.
+    expect(find.text('Not marked yet'), findsOneWidget);
+    expect(find.text('Resume marking'), findsOneWidget);
   });
 
-  testWidgets('reports an unreadable PDF before any marking', (WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    await tester.pumpWidget(
-      ExamCorrectorApp(
-        controller: _controller(
-          pdfService: FakePdfService(
-            error: 'No readable text was found in this PDF.',
-          ),
-        ),
+  testWidgets('reports an unreadable file before any processing', (WidgetTester tester) async {
+    await _sized(tester);
+    await tester.pumpWidget(ExamCorrectorApp(
+      controller: fakeController(
+        inspector: FakeInspector(error: 'This PDF is password protected.'),
       ),
-    );
+    ));
 
     await tester.tap(find.text('Choose…').first);
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('No readable text was found in this PDF.'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('Choose the completed script'),
-      findsOneWidget,
-    );
+    expect(find.text('This PDF is password protected.'), findsOneWidget);
+    expect(find.textContaining('Choose the completed script'), findsOneWidget);
   });
 
-  testWidgets('keeps the optional guidance out of the way until used',
-      (WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    final CorrectionController controller = _controller();
+  testWidgets('keeps the optional guidance out of the way until used', (WidgetTester tester) async {
+    await _sized(tester);
+    final CorrectionController controller = fakeController();
     await tester.pumpWidget(ExamCorrectorApp(controller: controller));
-
-    // Empty to begin with, and marking is armed without it.
     await _chooseBoth(tester);
     expect(controller.guidance.isEmpty, isTrue);
-    expect(
-      tester
-          .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Correct paper'))
-          .onPressed,
-      isNotNull,
-    );
 
-    await tester.enterText(
-      find.byKey(const Key('guidance-input')),
-      'Section A: one mark each.',
-    );
+    await tester.enterText(find.byKey(const Key('guidance-input')), 'Section A: one mark each.');
     await tester.pump();
     expect(controller.guidance.trimmed, 'Section A: one mark each.');
 
@@ -181,147 +223,107 @@ void main() {
     await tester.pumpAndSettle();
     expect(controller.guidance.isEmpty, isTrue);
     expect(
-      tester
-          .widget<TextField>(find.byKey(const Key('guidance-input')))
-          .controller!
-          .text,
+      tester.widget<TextField>(find.byKey(const Key('guidance-input'))).controller!.text,
       isEmpty,
     );
   });
 
-  testWidgets('explains a paper where no answers were found',
-      (WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    await tester.pumpWidget(
-      ExamCorrectorApp(
-        controller: _controller(
-          correctionService: FakeCorrectionService(result: unansweredResult),
-        ),
-      ),
-    );
-
+  testWidgets('the page inspector shows every region in developer mode', (WidgetTester tester) async {
+    await _sized(tester, const Size(1400, 1000));
+    await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
     await _chooseBoth(tester);
-    await tester.tap(find.text('Correct paper'));
+    await _correct(tester);
+
+    await tester.tap(find.text('Inspect pages'));
     await tester.pumpAndSettle();
 
-    // Zero out of everything is far more often the wrong file than a blank
-    // script, so the result says which file to check.
-    expect(
-      find.text('No answers were found anywhere in this paper'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('easy to choose the blank question paper'),
-        findsOneWidget);
-    expect(find.text('Total marks: 0 / 2'), findsOneWidget);
+    expect(find.text('Page inspector'), findsOneWidget);
+    expect(find.text('Handwritten answer (2)'), findsOneWidget);
+    expect(find.text('Page 1'), findsWidgets);
+    expect(find.text('Tap a region to inspect it.'), findsOneWidget);
+  });
+
+  testWidgets('the inspector is hidden outside developer mode', (WidgetTester tester) async {
+    await _sized(tester);
+    await tester.pumpWidget(ExamCorrectorApp(
+      controller: fakeController(config: configuredApp.copyWith(developerMode: false)),
+    ));
+    await _chooseBoth(tester);
+    await _correct(tester);
+    expect(find.text('Inspect pages'), findsNothing);
+    expect(find.text('Export…'), findsOneWidget);
   });
 
   group('layout', () {
-    // The window was overflowing at ordinary desktop sizes; every size the
-    // teacher can drag the window to must lay out cleanly.
     for (final Size size in <Size>[
-      Size(1180, 900), // default window
-      Size(1000, 830), // the size that overflowed
-      Size(900, 700),
-      Size(800, 560), // below the comfortable height: the page scrolls
-      Size(640, 480), // smallest sensible window
-      Size(1920, 1080), // maximised
+      const Size(1180, 900),
+      const Size(1000, 830),
+      const Size(900, 700),
+      const Size(800, 560),
+      const Size(640, 480),
+      const Size(1920, 1080),
     ]) {
       testWidgets('lays out without overflow at ${size.width}x${size.height}',
           (WidgetTester tester) async {
-        await tester.binding.setSurfaceSize(size);
-        addTearDown(() => tester.binding.setSurfaceSize(null));
-
-        await tester.pumpWidget(ExamCorrectorApp(controller: _controller()));
+        await _sized(tester, size);
+        await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
 
-        // …and with a result on screen, which is the taller state.
         await _chooseBoth(tester);
-        await tester.tap(find.text('Correct paper'));
-        await tester.pumpAndSettle();
-
+        await _correct(tester);
         expect(tester.takeException(), isNull);
-        expect(find.text('Total marks: 1 / 2'), findsOneWidget);
+        expect(find.text('Total marks: 2 / 4'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey<String>('question-row-Q1')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
       });
     }
   });
 
   group('settings', () {
-    testWidgets('warns when no key is set, then accepts one',
-        (WidgetTester tester) async {
-      await tester.binding.setSurfaceSize(const Size(1200, 900));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
+    testWidgets('warns when no key is set, then accepts one', (WidgetTester tester) async {
+      await _sized(tester, const Size(1200, 1000));
       final RecordingSettingsStore store = RecordingSettingsStore();
-      final CorrectionController controller = _controller(
-        config: const AppConfig(
-          apiKey: null,
-          model: 'gemini-3.7-flash',
-          effort: 'high',
-          maxTokens: 32000,
-        ),
+      final CorrectionController controller = fakeController(
+        config: const AppConfig(apiKey: null, model: 'gemini-3.7-flash', effort: 'high', maxTokens: 32000),
         settings: store,
       );
-
       await tester.pumpWidget(ExamCorrectorApp(controller: controller));
 
-      expect(find.text('No API key set — open Settings to add one.'),
-          findsOneWidget);
+      expect(find.text('No API key set — open Settings to add one.'), findsOneWidget);
 
       await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();
-
-      // The dialog says where the key will be kept.
       expect(find.text('Gemini API key'), findsOneWidget);
       expect(find.text('in-memory settings'), findsOneWidget);
+      expect(find.text('Page understanding'), findsOneWidget);
 
-      await tester.enterText(
-        find.byKey(const Key('settings-api-key')),
-        'a-typed-key',
-      );
-      await tester.enterText(
-        find.byKey(const Key('settings-model')),
-        'gemini-3.5-flash',
-      );
-      await tester.enterText(
-        find.byKey(const Key('settings-fallback-models')),
-        'gemini-3.5-flash-lite, gemini-3.7-flash',
-      );
+      await tester.enterText(find.byKey(const Key('settings-api-key')), 'a-typed-key');
+      await tester.enterText(find.byKey(const Key('settings-model')), 'gemini-3.5-flash');
+      await tester.enterText(find.byKey(const Key('settings-fallback-models')),
+          'gemini-3.5-flash-lite, gemini-3.7-flash');
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       expect(store.saved, 'a-typed-key');
-      expect(controller.config.apiKey, 'a-typed-key');
+      expect(store.savedLayout, 'hybrid');
       expect(controller.config.model, 'gemini-3.5-flash');
-      expect(store.savedFallbacks, 'gemini-3.5-flash-lite, gemini-3.7-flash');
-      expect(controller.config.modelChain, <String>[
-        'gemini-3.5-flash',
-        'gemini-3.5-flash-lite',
-        'gemini-3.7-flash',
-      ]);
-      expect(
-        find.text('Settings saved. Ready to mark with gemini-3.5-flash.'),
-        findsOneWidget,
-      );
+      expect(controller.config.modelChain,
+          <String>['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.7-flash']);
+      expect(find.text('Settings saved. Ready to mark with gemini-3.5-flash.'), findsOneWidget);
     });
 
     testWidgets('cancelling changes nothing', (WidgetTester tester) async {
-      await tester.binding.setSurfaceSize(const Size(1200, 900));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
+      await _sized(tester);
       final RecordingSettingsStore store = RecordingSettingsStore();
-      final CorrectionController controller = _controller(settings: store);
-
+      final CorrectionController controller = fakeController(settings: store);
       await tester.pumpWidget(ExamCorrectorApp(controller: controller));
+
       await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byKey(const Key('settings-api-key')),
-        'discarded',
-      );
+      await tester.enterText(find.byKey(const Key('settings-api-key')), 'discarded');
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
 

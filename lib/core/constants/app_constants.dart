@@ -64,6 +64,26 @@ class AppConstants {
   static const String apiEndpoint =
       'https://generativelanguage.googleapis.com/v1beta/interactions';
 
+  /// Retries of a request that failed for a reason that passes on its own.
+  static const int defaultRetryCount = 2;
+
+  /// Marking confidence below this flags a question for teacher review.
+  static const double defaultReviewThreshold = 0.7;
+
+  /// Longest side of an image sent to a model. Page analysis gains nothing
+  /// from 300 dpi, and every pixel is paid for.
+  static const int defaultMaxImageDimension = 1600;
+
+  /// Page images per vision request during page analysis.
+  static const int defaultPagesPerVisionRequest = 2;
+
+  /// Questions per marking request. Batching keeps a paper to a few requests;
+  /// capping keeps each response well inside the output limit.
+  static const int defaultQuestionsPerMarkingRequest = 8;
+
+  /// Images attached to a single request.
+  static const int defaultMaxImagesPerRequest = 16;
+
   /// A full paper can take minutes to mark. The request is streamed, so this
   /// bounds the gap between chunks rather than the whole correction.
   static const Duration apiIdleTimeout = Duration(minutes: 5);

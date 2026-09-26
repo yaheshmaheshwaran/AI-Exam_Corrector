@@ -1,5 +1,5 @@
 name: exam_corrector
-description: "Marks a student's exam paper against a supplied mark scheme, using Claude."
+description: "Understands and marks handwritten exam scripts against their question paper."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -22,6 +22,10 @@ dependencies:
   # Transport for the Anthropic Messages API. There is no official Anthropic
   # Dart SDK, so the service layer speaks the REST API directly.
   http: ^1.6.0
+
+  # Content hashes for documents and cache keys. Already present through the
+  # PDF dependency; declared because the application uses it directly.
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:

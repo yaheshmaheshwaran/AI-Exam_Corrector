@@ -106,3 +106,21 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# The local document-understanding sidecar, when it has been packaged with
+# ocr_service/packaging/build_sidecar.py. It is copied beside the executable
+# as ocr_service/, where the application looks for exam-corrector-ocr.exe.
+# Checked at install time rather than configure time, so packaging the sidecar
+# after the first build still takes effect. Without it the application uses a
+# development environment (ocr_service/.venv) if there is one, and otherwise
+# still marks typed papers.
+set(SIDECAR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ocr_service/dist/exam-corrector-ocr")
+install(CODE "
+  if(EXISTS \"${SIDECAR_DIR}\")
+    file(REMOVE_RECURSE \"${CMAKE_INSTALL_PREFIX}/ocr_service\")
+    file(COPY \"${SIDECAR_DIR}/\" DESTINATION \"${CMAKE_INSTALL_PREFIX}/ocr_service\")
+    message(STATUS \"Bundled the sidecar from ${SIDECAR_DIR}\")
+  else()
+    message(STATUS \"No packaged sidecar at ${SIDECAR_DIR}; scans will need ocr_service/.venv\")
+  endif()
+  " COMPONENT Runtime)

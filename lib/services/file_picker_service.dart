@@ -41,11 +41,48 @@ class FilePickerService {
     return file?.path;
   }
 
-  /// Like [pickPdf], but also accepts the scans and photographs that
-  /// handwriting recognition can read.
-  ///
-  /// Kept separate because the mark scheme still has to be a PDF: there is no
-  /// sense in running OCR over the document that defines the marks.
+  /// Several scripts at once — a class set. Empty if the teacher cancelled.
+  Future<List<String>> pickDocuments() async {
+    final List<XFile> files = await openFiles(
+      acceptedTypeGroups: const <XTypeGroup>[_documentGroup],
+      confirmButtonText: 'Select',
+    );
+    return <String>[for (final XFile file in files) file.path];
+  }
+
+  /// Marking guidance saved as a file: text, Markdown or a PDF.
+  Future<String?> pickGuidance() async {
+    final XFile? file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'Marking guidance',
+          extensions: <String>['txt', 'md', 'pdf'],
+          mimeTypes: <String>['text/plain', 'text/markdown', 'application/pdf'],
+          uniformTypeIdentifiers: <String>['public.plain-text', 'com.adobe.pdf'],
+        ),
+      ],
+      confirmButtonText: 'Load',
+    );
+    return file?.path;
+  }
+
+  /// Where to save an exported report, or null if the teacher cancelled.
+  Future<String?> pickSaveLocation({
+    required String suggestedName,
+    required String extension,
+  }) async {
+    final FileSaveLocation? location = await getSaveLocation(
+      suggestedName: suggestedName,
+      acceptedTypeGroups: <XTypeGroup>[
+        XTypeGroup(label: extension.toUpperCase(), extensions: <String>[extension]),
+      ],
+      confirmButtonText: 'Save',
+    );
+    return location?.path;
+  }
+
+  /// Like [pickPdf], but also accepts scans and photographs. Both documents
+  /// are chosen with this: either can arrive as a scan.
   Future<String?> pickDocument() async {
     final XFile? file = await openFile(
       acceptedTypeGroups: const <XTypeGroup>[_documentGroup],

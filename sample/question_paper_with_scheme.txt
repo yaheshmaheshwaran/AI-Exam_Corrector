@@ -1,0 +1,80 @@
+NORTHGATE ACADEMY
+Year 10 Combined Science - Biology Paper 1
+Cell Biology, Transport and Respiration
+
+Time allowed: 40 minutes
+Total marks available: 20
+
+Answer ALL questions in the space provided.
+
+--------------------------------------------------------------------
+SECTION A - Short answer                                    [10 marks]
+--------------------------------------------------------------------
+
+1  Name the organelle that carries out aerobic respiration, and state
+   the molecule it produces.                                [2 marks]
+   Mark scheme:
+     1. Names the mitochondrion. Accept "mitochondria". (1 mark)
+     2. States that ATP is produced. Accept "energy in the form of ATP".
+        Do not accept "energy" on its own. (1 mark)
+
+2 (a)  Write the word equation for aerobic respiration.     [1 mark]
+   Mark scheme:
+     1. glucose + oxygen -> carbon dioxide + water. Accept the reactants
+        and the products in either order. (1 mark)
+
+2 (b)  Explain why muscle cells contain a large number of
+       mitochondria.                                        [2 marks]
+   Mark scheme:
+     1. Muscle cells have a high energy demand / contract frequently. (1 mark)
+     2. Links that demand to aerobic respiration in the mitochondria
+        releasing more ATP. (1 mark)
+
+3  A cell is 50 micrometres long. In a drawing of the cell, the same
+   cell measures 100 mm. Calculate the magnification of the drawing.
+   Show your working.                                       [3 marks]
+   Mark scheme: method marks apply.
+     1. Both measurements converted to the same unit, e.g. 50 micrometres
+        given as 0.05 mm. (1 mark)
+     2. Correct method: magnification = size of image / size of real
+        object. (1 mark)
+     3. Correct answer: x2000. (1 mark)
+     A bare correct answer of x2000 with no working scores all 3 marks.
+
+4  Describe two ways a root hair cell is adapted for taking up mineral
+   ions from the soil.                                      [2 marks]
+   Mark scheme: any two of the following, maximum 2.
+     1. Long, thin extension increases the surface area. (1 mark)
+     2. Many mitochondria release ATP for active transport. (1 mark)
+     3. Thin cell wall gives a short diffusion distance. (1 mark)
+
+--------------------------------------------------------------------
+SECTION B - Extended answer                                 [10 marks]
+--------------------------------------------------------------------
+
+5  State one function of the cell membrane.                 [1 mark]
+   Answer: controls what enters and leaves the cell; accept "partially
+   permeable barrier". (1 mark)
+
+6  Describe how the structure of an alveolus makes it efficient for
+   gas exchange.                                            [4 marks]
+   Mark scheme:
+     1. Large surface area. (1 mark)
+     2. Wall one cell thick, short diffusion path. (1 mark)
+     3. Dense capillary network maintains the gradient. (1 mark)
+     4. Moist surface. (1 mark)
+
+7  Define osmosis.                                          [3 marks]
+   Mark scheme:
+     1. The movement of water. Do not accept "movement of particles". (1 mark)
+     2. From a dilute to a concentrated solution. (1 mark)
+     3. Through a partially permeable membrane. (1 mark)
+
+8  Name the product of anaerobic respiration in human muscle cells and
+   state one effect it has on the muscle.                   [2 marks]
+   Mark scheme:
+     1. Lactic acid. (1 mark)
+     2. Any one effect: fatigue; stops contracting efficiently; cramp. (1 mark)
+
+--------------------------------------------------------------------
+END OF PAPER

@@ -1,0 +1,4 @@
+# Packaging the sidecar into a self-contained folder (see packaging/).
+-r requirements.txt
+pyinstaller>=6.10
+pyinstaller-hooks-contrib>=2024.8

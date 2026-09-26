@@ -29,7 +29,13 @@ class SidecarProcessService {
   SidecarProcessService({
     this.startupTimeout = const Duration(seconds: 90),
     http.Client? client,
+    this.externalEndpoint,
   }) : _client = client ?? http.Client();
+
+  /// An already-running recogniser to use instead of starting one — a shared
+  /// machine with a GPU, or a sidecar started by hand while debugging. Read on
+  /// every call so a change in configuration applies immediately.
+  final SidecarEndpoint? Function()? externalEndpoint;
 
   /// Generous by necessity: the first start on a cold machine imports torch and
   /// may still be resolving model weights.
@@ -50,12 +56,36 @@ class SidecarProcessService {
   Future<SidecarEndpoint> ensureRunning({
     void Function(String message)? onProgress,
   }) {
+    final SidecarEndpoint? external = externalEndpoint?.call();
+    if (external != null) return _checkExternal(external);
+
     final SidecarEndpoint? live = _endpoint;
     if (live != null) return Future<SidecarEndpoint>.value(live);
 
     return _starting ??= _start(onProgress: onProgress).whenComplete(() {
       _starting = null;
     });
+  }
+
+  Future<SidecarEndpoint> _checkExternal(SidecarEndpoint endpoint) async {
+    try {
+      final http.Response response = await _client
+          .get(endpoint.resolve('health'), headers: endpoint.authHeaders)
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) return endpoint;
+      throw OcrException(
+        'The recogniser at ${endpoint.baseUrl} refused the connection '
+        '(HTTP ${response.statusCode}). Check EXAM_CORRECTOR_OCR_TOKEN.',
+        sidecarUnavailable: true,
+      );
+    } on OcrException {
+      rethrow;
+    } on Object {
+      throw OcrException(
+        'The recogniser at ${endpoint.baseUrl} is not answering.',
+        sidecarUnavailable: true,
+      );
+    }
   }
 
   Future<SidecarEndpoint> _start({
@@ -72,7 +102,17 @@ class SidecarProcessService {
     try {
       process = await Process.start(
         command.executable,
-        <String>[...command.arguments, '--port', '$port', '--token', token],
+        <String>[
+          ...command.arguments,
+          '--port',
+          '$port',
+          '--token',
+          token,
+          // The sidecar exits by itself if this app is killed rather than
+          // closed, instead of holding its model weights until a restart.
+          '--parent-pid',
+          '$pid',
+        ],
         workingDirectory: command.workingDirectory,
       );
     } on ProcessException catch (error) {

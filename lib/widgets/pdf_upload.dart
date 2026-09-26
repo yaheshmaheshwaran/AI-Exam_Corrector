@@ -1,58 +1,58 @@
 import 'package:flutter/material.dart';
 
 import 'package:exam_corrector/app/app_theme.dart';
-import 'package:exam_corrector/core/utils/marks_format.dart';
-import 'package:exam_corrector/models/exam_paper.dart';
+import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/widgets/section_card.dart';
 
 /// One of the two documents a correction needs.
 ///
-/// Both slots use this: the student's answer sheet and the question paper are
-/// chosen and extracted identically, and differ only in what they are called
-/// and what the teacher is told to pick. Extraction happens as soon as a file
-/// is chosen, so an unreadable file is caught here rather than at marking time.
+/// Both slots use this. A chosen file is checked straight away — readable,
+/// not encrypted, how many pages, typed or scanned — so a bad file is refused
+/// here rather than minutes into processing.
 class PdfUpload extends StatelessWidget {
   const PdfUpload({
     super.key,
     required this.title,
     required this.hint,
-    required this.paper,
+    required this.document,
     required this.isLoading,
     required this.onChoose,
-    this.onReviewTranscript,
+    this.summary,
+    this.onAdd,
   });
+
+  /// Shown instead of the file name — for a class set of scripts.
+  final String? summary;
+
+  /// Adds more files to those chosen.
+  final VoidCallback? onAdd;
 
   final String title;
 
   /// What to choose, shown while the slot is empty.
   final String hint;
 
-  final ExamPaper? paper;
+  final SelectedDocument? document;
   final bool isLoading;
   final VoidCallback? onChoose;
 
-  /// Offered once a document has been recognised from handwriting, so the
-  /// teacher can go back to the transcript after accepting it.
-  final VoidCallback? onReviewTranscript;
-
   @override
   Widget build(BuildContext context) {
-    final ExamPaper? loaded = paper;
-    final bool ready = loaded != null && !isLoading;
-    final bool recognised = ready && loaded.isHandwritten;
+    final SelectedDocument? chosen = document;
+    final bool ready = chosen != null && !isLoading;
 
     return SectionCard(
       title: title,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          if (recognised && onReviewTranscript != null) ...<Widget>[
-            OutlinedButton.icon(
-              onPressed: onReviewTranscript,
-              icon: const Icon(Icons.fact_check_outlined, size: 16),
-              label: const Text('Transcript'),
+          if (onAdd != null) ...<Widget>[
+            IconButton(
+              tooltip: 'Add more scripts',
+              onPressed: onAdd,
+              icon: const Icon(Icons.library_add_outlined, size: 18),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
           ],
           OutlinedButton.icon(
             onPressed: onChoose,
@@ -82,7 +82,7 @@ class PdfUpload extends StatelessWidget {
             else
               Icon(
                 ready
-                    ? (recognised ? Icons.draw_outlined : Icons.check_circle)
+                    ? (chosen.needsRendering ? Icons.draw_outlined : Icons.check_circle)
                     : Icons.picture_as_pdf_outlined,
                 size: 16,
                 color: ready ? AppTheme.success : AppTheme.textSecondary,
@@ -90,12 +90,10 @@ class PdfUpload extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                _label(loaded),
+                _label(chosen),
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: ready
-                          ? const Color(0xFF0B5A0B)
-                          : AppTheme.textSecondary,
+                      color: ready ? const Color(0xFF0B5A0B) : AppTheme.textSecondary,
                     ),
               ),
             ),
@@ -105,16 +103,22 @@ class PdfUpload extends StatelessWidget {
     );
   }
 
-  String _label(ExamPaper? paper) {
-    if (isLoading) return 'Reading…';
-    if (paper == null) return hint;
+  String _label(SelectedDocument? document) {
+    if (isLoading) return 'Checking…';
+    if (summary != null) return summary!;
+    if (document == null) return hint;
 
-    // Saying the text was recognised rather than extracted matters: it tells
-    // the teacher why the transcript button is there and why it is worth using.
-    final String how = paper.isHandwritten
-        ? '${formatCount(paper.characterCount)} characters recognised'
-        : '${formatCount(paper.characterCount)} characters extracted';
-
-    return '${paper.fileName}  ($how)';
+    final String pages =
+        '${document.pageCount} page${document.pageCount == 1 ? '' : 's'}';
+    // Saying scanned rather than typed tells the teacher which path the paper
+    // will take, and why it may take longer.
+    final String kind = switch (document.source) {
+      DocumentSource.textLayer => 'typed',
+      DocumentSource.scanned => 'scanned — handwriting will be read',
+      DocumentSource.mixed => '${document.textLayerPages} typed, '
+          '${document.pageCount - document.textLayerPages} scanned',
+      DocumentSource.image => 'photograph — handwriting will be read',
+    };
+    return '${document.fileName}  ($pages, $kind)';
   }
 }

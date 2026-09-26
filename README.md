@@ -1,22 +1,28 @@
 # Exam Corrector
 
-A Flutter **Windows desktop** application that marks a student's answer sheet
-against the question paper it was sat from, using Google Gemini, and shows the
-result question by question. Handwritten scripts are read locally with Microsoft
-TrOCR.
+A Flutter **Windows desktop** application that understands a student's
+handwritten exam script — its answers, diagrams, graphs, tables and equations —
+and marks it against the question paper it was sat from, showing the evidence
+for every mark and letting the teacher review and override each one.
 
 ## Workflow
 
 ```
-Upload answer sheet + question paper → Correct
-→ Content extraction, or handwriting recognition and teacher review
-→ Questions, sections and marks read from the question paper
-→ Each answer matched to its question by question number
-→ AI marks it, declaring the marking points it rewarded
-→ Structured result, validated locally
-→ Question-by-question marks, reasoning and marking points
-→ Total marks and percentage
+Upload answer sheet + question paper (+ optional marking guidance) → Correct
+→ Question paper read: sections, questions, parts, marks
+→ Answer sheet rendered page by page; blank pages skipped
+→ Each page divided into regions: answers, question numbers, diagrams,
+  graphs, tables, equations, crossed-out work, margin notes
+→ Handwriting read region by region, with uncertainty kept
+→ Answers found from label to label, across regions and pages,
+  and matched to the paper's questions
+→ Diagrams, graphs, tables and equations analysed from their images
+→ Each question's complete answer reconstructed from its evidence
+→ Marked from text and images together, every mark citing its evidence
+→ Teacher reviews, corrects, overrides, exports
 ```
+
+The design is described in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Requirements
 
@@ -54,14 +60,21 @@ The key is never hard-coded, and `.env` is git-ignored.
 flutter run -d windows
 ```
 
-To produce a distributable build:
+To produce a distributable build, package the sidecar first so scans work
+without a Python installation on the teacher's machine:
 
 ```bat
+ocr_service\.venv\Scripts\python -m pip install -r ocr_service\requirements-build.txt
+ocr_service\.venv\Scripts\python ocr_service\packaging\build_sidecar.py
 flutter build windows --release
 ```
 
-The result is in `build\windows\x64\runner\Release\`. Ship that folder; each
-teacher enters their own key in Settings on first run.
+`build_sidecar.py` builds `ocr_service\dist\exam-corrector-ocr\` and smoke-tests
+it (render, layout and handwriting recognition through the built binary);
+`flutter build windows` copies it beside the executable as `ocr_service\`. The
+result is in `build\windows\x64\runner\Release\`. Ship that folder; each
+teacher enters their own key in Settings on first run. Recognition weights
+(about 1.5 GB) download to the teacher's user cache on the first scan.
 
 > Windows binaries can only be built on a Windows host — Flutter does not
 > cross-compile the Windows target from macOS or Linux.
@@ -79,31 +92,51 @@ Marking takes two documents. The question paper says what the questions are and
 what they are worth; the answer sheet is what gets judged. They are joined on
 question number.
 
-1. **Student's answer sheet** — the completed script. Text is extracted
-   immediately on a background isolate, or recognised if it is handwritten, so
-   an unreadable file is caught before any API call.
+1. **Student's answer sheet** — the completed script, as a PDF or a photograph.
+   Select several files at once to mark a whole class against the same paper
+   (the add button beside **Choose…** adds more).
+   It is checked the moment it is chosen — readable, not encrypted, how many
+   pages, typed or scanned — so an unreadable file is refused before any
+   processing.
 2. **Question paper** — the blank paper, with its sections and its printed mark
    allocations. This is the marking authority: the questions that get marked,
    which section each belongs to, and each question's maximum all come from
    here. Marks printed on the answer sheet are the student's own copy and are
    ignored.
-3. **Marking guidance** *(optional)* — notes such as *"Section A: one mark each.
-   Section B: award marks based on the required points."* Use it only where the
-   question paper leaves something unsaid. Where the two disagree, the question
-   paper wins and the evaluation says so.
-4. **Correct paper** — enabled once both documents are present; the guidance is
-   never required. The result appears in section 4 with per-question marks, the
-   student's answer, a short evaluation, satisfied (✓) and unsatisfied (✗)
-   marking points, and a pinned total with percentage.
+3. **Marking guidance** *(optional)* — typed, or loaded from a text, Markdown or
+   PDF file. When it covers a question, its points are what marking rewards;
+   the question paper still decides what each question is worth.
+4. **Correct paper** — processing shows the stage, pages, and what has been
+   found so far, and can be cancelled. Results appear question by question;
+   opening a question shows the student's original ink beside what was read
+   from it, the marking points with the regions each was awarded for, the
+   reasoning, the confidence, and a panel to accept or change the mark.
+
+### Marking a class
+
+With several scripts chosen, step 4 becomes a class table and the status bar
+offers **Mark all _n_ scripts**. Scripts are marked one after another, each with
+its own evidence, reviews and corrections; ones already marked are not repeated.
+If the quota runs out partway, the marked scripts are kept and **Mark all**
+continues from the one that stopped. Open a row to review that student; **All
+scripts** returns to the table, which shows each student's mark (with your
+changes), what is left to review and the class average. **Export class…**
+writes one gradebook CSV with a column per question.
 
 ### What decides whether an answer is right
 
-There is no mark scheme. The question paper supplies the structure, and the
-model supplies the subject knowledge — so for each question it must also report
-the marking points it decided to reward and how it split the marks between them.
-Those are the ✓/✗ lines on each result card, and they are the thing to read
-before trusting a mark: they are the model's reasoning made checkable, not a
-scheme you supplied.
+The question paper supplies the structure; the teacher's guidance, when given,
+supplies the marking points; otherwise the model infers them from the question
+and says so. Every point that awards marks names the regions of the script it
+was awarded for — click one to see it highlighted on the scanned page — and
+says whether it rests on what is plainly written, on a contextual reading of
+unclear writing, or on something uncertain.
+
+A question is flagged **Review** when its confidence is below the threshold
+(Settings), when a mark rests on uncertain evidence, when the handwriting was
+hard to read or two recognisers disagreed, when the answer's mapping to the
+question is uncertain, or when the model asks for it. Your mark is recorded
+beside the AI's, never over it; the total counts yours.
 
 Two things are always surfaced rather than left implicit:
 
@@ -124,7 +157,11 @@ prints exactly what the application reads from a PDF.
 
 ### Free-tier quotas, and the model chain
 
-One correction is one API request. Google's free tier allows as few as **20
+A typed paper costs one or two requests. A handwritten one adds a request or
+two for handwriting the local recogniser was unsure of, and one per page (or
+two) only for pages with drawings, tables or graphs. Everything is cached, so
+marking the same paper again — or resuming after a failure — costs only what
+had not finished. Google's free tier allows as few as **20
 requests per day** for a flagship model, counted **per project and per model**,
 resetting at midnight Pacific — so a single model cannot mark a class set.
 
@@ -165,134 +202,97 @@ safety net rather than the normal path.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | — | Required. API credential. `GOOGLE_API_KEY` is accepted too. |
-| `EXAM_CORRECTOR_MODEL` | `gemini-3.6-flash` | Model marking starts on. |
-| `EXAM_CORRECTOR_FALLBACK_MODELS` | `gemini-3.5-flash, gemini-3.5-flash-lite, gemini-3.7-flash` | Comma-separated models to continue on as each daily quota runs out. Set it empty to keep every paper on one model. |
-| `EXAM_CORRECTOR_EFFORT` | `high` | Gemini thinking level: `minimal`, `low`, `medium`, `high`. |
-| `EXAM_CORRECTOR_MAX_TOKENS` | `32000` | Output ceiling; raise for very long papers. |
-| `EXAM_CORRECTOR_OCR_ENABLED` | `true` | Read scans with no text layer. Set false to reject them instead. |
-| `EXAM_CORRECTOR_TROCR_MODEL` | `microsoft/trocr-large-handwritten` | Recognition model. `trocr-base-handwritten` is faster and less accurate. |
-| `EXAM_CORRECTOR_OCR_THRESHOLD` | `0.92` | Below this confidence a line is cross-checked and flagged for review. |
-| `EXAM_CORRECTOR_OCR_VISION_CHECK` | `true` | Ask the vision model for a second opinion on uncertain lines. Costs API requests. |
-| `EXAM_CORRECTOR_OCR_DPI` | `300` | Resolution pages are rendered at before recognition (100–400). |
+| `GEMINI_API_KEY` | — | API credential. `GOOGLE_API_KEY` is accepted too. |
+| `EXAM_CORRECTOR_MODEL` | `gemini-3.6-flash` | Marking model. |
+| `EXAM_CORRECTOR_FALLBACK_MODELS` | `gemini-3.5-flash, gemini-3.5-flash-lite, gemini-3.7-flash` | Models to continue on as each daily quota runs out. Empty keeps every paper on one model. |
+| `EXAM_CORRECTOR_VISION_MODEL` | the marking model | Reads pages: layout, handwriting second opinions, scanned question papers. |
+| `EXAM_CORRECTOR_DIAGRAM_MODEL` | the vision model | Analyses diagrams, graphs, tables and equations. |
+| `EXAM_CORRECTOR_EFFORT` | `high` | Marking reasoning level: `minimal`, `low`, `medium`, `high`. |
+| `EXAM_CORRECTOR_MAX_TOKENS` | `32000` | Marking output ceiling. |
+| `EXAM_CORRECTOR_LAYOUT_ENGINE` | `hybrid` | `hybrid` (local first, vision model for complex pages), `vision`, or `local` (offline). |
+| `EXAM_CORRECTOR_VISUAL_ANALYSIS` | `true` | Structured analysis of diagrams, graphs, tables, equations. Their images reach the marker either way. |
+| `EXAM_CORRECTOR_REVIEW_THRESHOLD` | `0.7` | Marking confidence below this flags a question for review. |
+| `EXAM_CORRECTOR_OCR_ENABLED` | `true` | Read handwriting locally with TrOCR. Off relies on the vision model alone. |
+| `EXAM_CORRECTOR_TROCR_MODEL` | `microsoft/trocr-large-handwritten` | Local handwriting model. |
+| `EXAM_CORRECTOR_OCR_THRESHOLD` | `0.92` | Handwriting below this — any line, or the region — gets a second opinion and is flagged. |
+| `EXAM_CORRECTOR_OCR_VISION_CHECK` | `true` | Allow that second opinion. Costs requests. |
+| `EXAM_CORRECTOR_OCR_DPI` | `300` | Render resolution (100–400). |
+| `EXAM_CORRECTOR_MAX_IMAGE_DIM` | `1600` | Longest side of any image sent to a model. |
+| `EXAM_CORRECTOR_PAGES_PER_REQUEST` | `2` | Pages per vision request during page analysis. |
+| `EXAM_CORRECTOR_QUESTIONS_PER_REQUEST` | `8` | Questions per marking request. |
+| `EXAM_CORRECTOR_MAX_IMAGES_PER_REQUEST` | `16` | Images attached to one request. |
+| `EXAM_CORRECTOR_TIMEOUT_SECONDS` | `300` | How long a request may go silent. |
+| `EXAM_CORRECTOR_RETRIES` | `2` | Retries of a request that failed transiently. |
+| `EXAM_CORRECTOR_API_ENDPOINT` | Gemini Interactions API | For a proxy or regional endpoint. |
+| `EXAM_CORRECTOR_CACHE` | `true` | Reuse cached stage results. |
+| `EXAM_CORRECTOR_DEBUG` | `false` | Developer mode: the page inspector. |
 | `EXAM_CORRECTOR_OCR_DEVICE` | auto | Force the recogniser onto `cpu`, `mps` or `cuda`. |
-| `EXAM_CORRECTOR_OCR_COMMAND` | — | Path to a prebuilt sidecar binary, instead of the development virtual environment. |
+| `EXAM_CORRECTOR_OCR_COMMAND` | — | A prebuilt sidecar binary, instead of the development environment. |
+| `EXAM_CORRECTOR_OCR_ENDPOINT`, `EXAM_CORRECTOR_OCR_TOKEN` | — | Use an already-running sidecar instead of starting one. |
+
+An invalid value stops the application at start-up with a message naming the
+setting. Most of these are also in **Settings**.
 
 ## Architecture
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the pipeline, the domain model, the
+engine interfaces, caching, error handling, alignment and marking.
+
 ```
 lib/
-  main.dart                          entry point: config → service → controller → window
-  app/
-    app.dart                         application shell and startup-error screen
-    app_theme.dart                   desktop theme
-  core/
-    config/app_config.dart           environment- and .env-based configuration
-    constants/app_constants.dart     defaults, limits, API endpoint
-    errors/app_exception.dart        failures carrying teacher-facing messages
-    utils/marks_format.dart          mark, percentage and count formatting
-  models/
-    exam_paper.dart                  extracted paper, and how it was extracted
-    marking_guidance.dart            the teacher's optional notes
-    correction_result.dart           validated correction + adjustments
-    question_result.dart             per-question marks and marking points
-    ocr/                             transcript, pages, lines with boxes and confidence
-  services/
-    pdf_service.dart                 PDF validation and text extraction
-    file_picker_service.dart         native open dialog
-    settings_store.dart              the API key, saved in the user profile
-    correction_validation_service.dart  validates the AI response before it becomes marks
-    ai/
-      correction_service.dart        CorrectionService interface
-      correction_prompt.dart         correction prompt + JSON response schema
-      gemini_client.dart             shared REST transport: streaming, retries, errors
-      gemini_correction_service.dart   Gemini implementation of the interface
-      vision_transcription_service.dart  second opinion on low-confidence lines
-    ocr/
-      ocr_service.dart               OcrService interface
-      sidecar_ocr_service.dart       talks to the local TrOCR process
-      sidecar_process_service.dart   starts, health-checks and stops that process
-      transcript_parser.dart         validates the sidecar's response
-      document_ingest_service.dart   routes a file to the text layer or to OCR
-      answer_normalizer.dart         repairs recognition artefacts, never spelling
-      question_anchor_service.dart   ties questions to the lines they were read from
-  state/
-    correction_controller.dart       ChangeNotifier driving the workflow
-  screens/
-    home/home_screen.dart            two uploads, guidance, correct, results
-    review/transcript_review_screen.dart  check the transcript before marking
-  widgets/                           section shell, uploads, guidance, progress,
-                                     question card, results view, transcript line
-ocr_service/                         the Python handwriting recogniser — see its README
+  domain/        pages, regions, evidence, questions, answers, marks, reviews, jobs
+  pipeline/      the stages and their engines; exam_pipeline.dart runs them
+  services/      model client (Gemini), sidecar, PDF, settings, export, reviews
+  state/         the workflow controller
+  screens/       home, question detail, page inspector
+  widgets/       uploads, guidance, processing, results, page viewer, settings
+ocr_service/     the local Python engines — see its README
 ```
 
-Each boundary is deliberate:
+Boundaries that matter:
 
 - **The UI holds no marking logic.** It collects input, calls the controller,
-  and renders whatever the validation layer approves.
-- **State management is a plain `ChangeNotifier`** rendered with
-  `ListenableBuilder`. A single-window tool does not need more, and the widgets
-  stay free of workflow logic.
-- **The AI is behind `CorrectionService`.**
-  `lib/services/ai/gemini_correction_service.dart` is the only file that
-  knows which model or provider is in use; swapping it means writing one new
-  implementation of the interface. There is no official Gemini SDK for Dart, so
-  it speaks the Interactions REST API directly, streamed so a long correction
-  cannot hit an HTTP timeout. Requests are sent with `store: false`, so papers
-  are not retained server-side.
-- **PDF handling is independent of both.** It turns a path into text, or throws
-  an error message written for a teacher. Parsing runs on a background isolate
-  so the window stays responsive. It has no opinion about, and no dependency on,
-  handwriting recognition: the choice between the two lives one level up, in
-  `DocumentIngestService`.
-- **Handwriting recognition is behind `OcrService`,** so the local TrOCR sidecar
-  could be replaced by a hosted one without touching anything above it. Marking
-  is unaware of it entirely — OCR produces a `String`, which reaches
-  `CorrectionService.correct` exactly as a text layer does.
-
-### How marks are kept honest
-
-- The prompt names the question paper as the authority for structure: the
-  questions marked, their sections and their maxima all come from it, and marks
-  printed on the answer sheet are explicitly disregarded.
-- Correctness is the model's judgement, so it must declare the marking points it
-  rewarded and how it divided the marks. Marking against stated points, shown to
-  the teacher, beats a general impression of the answer that cannot be checked.
-- A maximum the paper did not state, and any answer whose question number is not
-  in the paper, are both reported as warnings rather than absorbed silently.
-- The response is constrained to a JSON schema (`response_format.schema`), so the
-  application never parses free-form prose into marks.
-- `correction_validation_service.dart` re-checks every field before display.
-  Awarded marks are capped at the question maximum, negative marks are raised to
-  zero, marks on unsatisfied points are zeroed, and **the totals and percentage
-  are always recomputed locally** from the per-question marks rather than
-  trusted from the model. Any adjustment is shown to the teacher above the
-  result.
+  and renders what the pipeline and the validation layer produced.
+- **Every model call goes through `ModelClient`.** `GeminiModelClient` is the
+  only code that knows the provider; `main.dart` is the only place it is named.
+- **Every stage is behind an interface** (`lib/pipeline/engines.dart`) and
+  chosen by configuration in `pipeline_factory.dart`.
+- **Nothing reaches the screen unvalidated.** Marks are capped at each
+  question's maximum, totals are recomputed locally, evidence must belong to
+  the answer, and any adjustment becomes a review reason.
 
 ## Tests
 
 ```bat
 flutter test
+ocr_service\.venv\Scripts\python -m pytest ocr_service\tests
 ```
 
-Covers the validation rules, configuration parsing, PDF extraction against a
-generated PDF, the Gemini client (request shape, streamed-response parsing,
-refusals, truncation, retries, and each HTTP failure), the workflow controller,
-the Settings flow, an end-to-end widget walkthrough from upload to displayed
-marks, and a layout check at six window sizes so the window cannot overflow.
+Both suites are offline and fast. The Dart suite covers the domain model and
+its JSON round trips, question-paper parsing, label detection, answer
+boundaries and alignment (continuations, sub-parts, split blocks, unmatched
+labels), the handwriting ensemble policy, vision page analysis parsing, hybrid
+fallbacks, visual analysis and its failures, answer reconstruction, the marking
+validator and engine, the pipeline end to end with caching, resume, teacher
+corrections and cancellation, the Gemini transport (streaming, retries, the
+model chain, every HTTP failure, timeouts), the controller, and the screens —
+including a layout check at six window sizes. The Python suite covers
+rendering, blank detection, local layout (text blocks, question numbers,
+diagrams, graphs, tables, strikes, ruling), region recognition, word
+confidences, cropping and the HTTP endpoints — with no model weights loaded.
 
-The suite is offline. Three scripts check the real service; they live outside
-`test/` so `flutter test` never touches the network:
+Checks that use the real services live outside `test/`:
 
 | Script | What it answers |
 | --- | --- |
-| `dart run tool/live_check.dart` | Does the key work end to end? Marks a two-question paper. |
-| `dart run tool/sample_check.dart` | Does marking still agree with `sample/expected_outcome.md`? Marks the sample paper and compares every question. |
-| `dart run tool/quota_probe.dart [model]` | Which models does this key have quota for? Prints the raw status and message. |
-| `flutter test tool/show_extracted.dart` | What does the PDF layer actually read from a file? Defaults to the sample paper; set `EXAM_CORRECTOR_PDF=/path/to/file.pdf` for another. |
-| `flutter test tool/ocr_check.dart` | The whole handwriting pipeline through the app's own services, with per-line confidences and the text that would be marked. Set `EXAM_CORRECTOR_SCAN=…` for another file, `EXAM_CORRECTOR_OCR_VISION_CHECK=0` to spend no quota. |
+| `dart run tool/live_check.dart` | Does the key work? Marks two small answers. |
+| `flutter test tool/sample_check.dart` | Does marking agree with `sample/expected_outcome.md`? Runs the typed sample through the whole pipeline. Add `EXAM_CORRECTOR_GUIDANCE=sample/mark_scheme.txt` to mark with the mark scheme as guidance. |
+| `flutter test tool/pipeline_check.dart` | What does every stage make of a script? Pages, regions, readings, answers, marks. `EXAM_CORRECTOR_SCAN=…`, `EXAM_CORRECTOR_QUESTIONS=…`; `EXAM_CORRECTOR_CHECK_MARKING=0` skips marking. |
+| `dart run tool/quota_probe.dart [model]` | Which models does this key have quota for? |
+| `flutter test tool/show_extracted.dart` | What does the PDF text layer contain? |
+| `ocr_service/.venv/bin/python ocr_service/tools/run_pipeline.py <file>` | The local engines alone: render, layout, recognition. |
 
-Override the model for a run with `EXAM_CORRECTOR_MODEL=<model> dart run …`.
+They are cached like the application, so a second run is fast and free.
 
 ### Sample inputs
 
@@ -307,6 +307,8 @@ Override the model for a run with `EXAM_CORRECTOR_MODEL=<model> dart run …`.
 | `mark_scheme.pdf` | A worked mark scheme. Not an input any more; kept as a reference for what the marks should be |
 | `mark_scheme.txt` | The same mark scheme, as text |
 | `expected_outcome.md` | The marks each question should receive, and why |
+| `visual_student_paper.pdf`, `visual_question_paper.pdf` | A two-page handwritten script whose answers are a labelled diagram, a table, a graph and working with a struck-out line |
+| `visual_expected.md` | What the visual sample should score (9 / 11), and why |
 
 The script is written so one paper exercises every marking rule: full credit,
 partial credit, an accepted alternative wording, a calculation with method
@@ -319,53 +321,48 @@ Regenerate them with:
 ```bat
 flutter test tool/make_sample_inputs.dart
 ocr_service/.venv/bin/python ocr_service/tools/make_handwritten_sample.py
+ocr_service/.venv/bin/python ocr_service/tools/make_visual_sample.py
 ```
+
+Last measured with the real models: the typed sample scores 14 / 20 against the
+expected 14 / 20 with the mark scheme loaded as guidance (15 / 20 without — the
+inferred scheme is more lenient on Q2(b)); the visual sample scores 9 / 11 with
+every question as expected. Run `pipeline_check.dart` with
+`EXAM_CORRECTOR_SCAN=sample/visual_student_paper.pdf
+EXAM_CORRECTOR_QUESTIONS=sample/visual_question_paper.pdf` to see every stage.
 
 ## Handwritten scripts
 
-A PDF with a text layer is read directly. A scan or a photograph — which has no
-extractable text — is read by **Microsoft TrOCR**, running locally in a Python
-sidecar the application starts on demand. See
-[`ocr_service/README.md`](ocr_service/README.md) for the setup, which is a
-one-time `uv venv` and install.
+Scans and photographs are rendered and analysed by a local Python sidecar the
+application starts on demand. See [`ocr_service/README.md`](ocr_service/README.md)
+for its one-time setup. Typed PDFs need no sidecar: they are read from their
+text layer (the sidecar, if present, adds page images for the evidence view).
 
 ```
-scan or photograph
-   │
-   ├─ PyMuPDF      render each page
-   ├─ OpenCV       deskew, denoise, even out the lighting
-   ├─ docTR DBNet  find the text lines
-   ├─ TrOCR        read each line, and score its own confidence
-   ├─ Gemini       re-read only the lines TrOCR was unsure of
-   └─ review       the teacher checks the transcript before anything is marked
+page image
+   ├─ PyMuPDF + OpenCV    render, keep the original, deskew a clean copy, skip blank pages
+   ├─ layout              DBNet text + computer vision: answer blocks, question numbers,
+   │                      diagrams, graphs, tables, crossed-out lines, margins
+   ├─ vision model        only for pages with drawings or unexplained ink (hybrid)
+   ├─ TrOCR               each region line by line, word-level confidence
+   ├─ vision model        a second reading of anything uncertain
+   └─ marking             text and images together, uncertainty shown to the model
 ```
 
-Three things make this trustworthy rather than a black box:
+What makes it trustworthy rather than a black box:
 
-- **The teacher sees the evidence.** Recognition stops at a review screen that
-  shows each line beside the strip of page it was read from, with the uncertain
-  ones highlighted and filterable. Nothing is marked until it is accepted, and
-  the original reading is always one click away.
-- **Uncertainty is measured, and acted on.** TrOCR reports no confidence, so it
-  is derived from the decoder's own token probabilities. Lines below the
-  threshold get a second opinion from the vision model — sent as cropped line
-  images, batched, so a whole script costs a request or two rather than a day's
-  quota. Where the two readings agree the line is cleared; where they disagree
-  it stays flagged.
-- **Transcription errors are not marked as the student's.** When a paper came
-  from OCR the prompt says so, and tells the model to judge the answer on its
-  evident intent rather than deducting for a misread character.
+- **Nothing is overwritten.** Every reading of every region is kept; a teacher's
+  correction sits beside the machine reading; the AI's mark beside the teacher's.
+- **Uncertainty is measured and carried forward.** Low-confidence words are
+  highlighted in the review and marked `{?like this?}` for the marking model,
+  which is also shown the original image of every uncertain region.
+- **Everything is traceable.** Every mark names the regions it was awarded for,
+  and every region opens on the scanned page.
 
-The honest limitation: TrOCR is trained on English prose, one line at a time.
-It is excellent on running handwriting and weak on the rest of what an exam
-script contains — equations, tables, diagrams, crossed-out work. On the sample
-script it read every prose answer correctly and misread `+` as `t`, `=` as `-`,
-and `100 / 0.05` as `( 100 ) 0.05`. Those are exactly the lines it scores low
-on, which is what the cross-check and the review screen are for. **Check the
-working on any question that turns on arithmetic.**
-
-Turn any of this off in **Settings** — recognition itself, the cross-check, or
-the confidence threshold.
+The honest limitations are listed in ARCHITECTURE.md; the main ones are that
+local layout does not detect equations as such (their images reach the marker
+through the uncertainty path, and vision-analysed pages detect them), and that
+a scanned question paper needs the vision model.
 
 ## Note on dependencies
 

@@ -63,3 +63,20 @@ class OcrException extends AppException {
   /// installation instructions rather than at their scan.
   final bool sidecarUnavailable;
 }
+
+/// The teacher cancelled processing. Not a failure: everything finished so far
+/// is cached, and starting again picks up where this stopped.
+class CancelledException extends AppException {
+  const CancelledException() : super('Processing was cancelled.');
+}
+
+/// A stage of the understanding pipeline failed in a way that stops it.
+///
+/// Carries the stage so the teacher is told where it stopped — "page 7 could
+/// not be rendered" is actionable where "processing failed" is not.
+class PipelineException extends AppException {
+  const PipelineException(super.message, {this.stage, this.page});
+
+  final String? stage;
+  final int? page;
+}

@@ -3,12 +3,17 @@
 This is the step the Flutter side cannot do for itself. `syncfusion_flutter_pdf`
 extracts a text layer but cannot render a page, so a scanned script has to come
 through here before anything can read it.
+
+`iter_pages` renders one page at a time. A 200-page script at 300 dpi is several
+gigabytes of pixels; holding it all at once is what would take a teacher's
+laptop down, so callers process each page and let it go before the next.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Iterator
 
 import numpy as np
 import pymupdf
@@ -35,10 +40,25 @@ class PageImage:
     width: int
     height: int
     image: np.ndarray  # BGR, uint8 — OpenCV's convention
+    page_count: int = 1
+
+    # Characters in the PDF's own text layer on this page. Zero for a scan and
+    # for a photograph.
+    text_chars: int = 0
+    text: str = ""
 
 
 def rasterize(source_path: str, workdir: str, dpi: int = 300) -> list[PageImage]:
-    """Renders `source_path` to one image per page.
+    """Renders `source_path` to one image per page, all at once.
+
+    Kept for small documents and the tests; the service streams with
+    `iter_pages` instead.
+    """
+    return list(iter_pages(source_path, workdir, dpi=dpi))
+
+
+def iter_pages(source_path: str, workdir: str, dpi: int = 300) -> Iterator[PageImage]:
+    """Renders `source_path` one page at a time.
 
     Accepts a PDF or a single photograph. Raises `ValueError` with a message
     that is safe to show a teacher.
@@ -46,22 +66,28 @@ def rasterize(source_path: str, workdir: str, dpi: int = 300) -> list[PageImage]
     if not os.path.isfile(source_path):
         raise ValueError(f"File not found: {source_path}")
 
-    dpi = max(MIN_DPI, min(MAX_DPI, int(dpi)))
+    dpi = clamp_dpi(dpi)
     pages_dir = os.path.join(workdir, "pages")
     os.makedirs(pages_dir, exist_ok=True)
 
     suffix = os.path.splitext(source_path)[1].lower()
     if suffix in IMAGE_SUFFIXES:
-        return [_load_photograph(source_path, pages_dir)]
+        yield _load_photograph(source_path, pages_dir)
+        return
     if suffix == ".pdf":
-        return _render_pdf(source_path, pages_dir, dpi)
+        yield from _render_pdf(source_path, pages_dir, dpi)
+        return
 
     raise ValueError(
         f"Unsupported file type '{suffix}'. Supply a PDF or an image."
     )
 
 
-def _render_pdf(source_path: str, pages_dir: str, dpi: int) -> list[PageImage]:
+def clamp_dpi(dpi: int) -> int:
+    return max(MIN_DPI, min(MAX_DPI, int(dpi)))
+
+
+def _render_pdf(source_path: str, pages_dir: str, dpi: int) -> Iterator[PageImage]:
     zoom = dpi / PDF_BASE_DPI
     matrix = pymupdf.Matrix(zoom, zoom)
 
@@ -78,9 +104,15 @@ def _render_pdf(source_path: str, pages_dir: str, dpi: int) -> list[PageImage]:
         if document.page_count == 0:
             raise ValueError("This PDF has no pages.")
 
-        pages: list[PageImage] = []
         for index in range(document.page_count):
-            pixmap = document.load_page(index).get_pixmap(matrix=matrix, alpha=False)
+            try:
+                page = document.load_page(index)
+                pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+                text = page.get_text("text") or ""
+            except Exception as error:  # noqa: BLE001
+                raise ValueError(
+                    f"Page {index + 1} could not be rendered: {error}"
+                ) from error
 
             # PyMuPDF hands back RGB; OpenCV works in BGR throughout this
             # pipeline, so the channel flip happens once, here.
@@ -91,17 +123,16 @@ def _render_pdf(source_path: str, pages_dir: str, dpi: int) -> list[PageImage]:
             path = os.path.join(pages_dir, f"page_{index:03d}.png")
             Image.fromarray(rgb[:, :, :3]).save(path)
 
-            pages.append(
-                PageImage(
-                    index=index,
-                    path=path,
-                    width=pixmap.width,
-                    height=pixmap.height,
-                    image=image,
-                )
+            yield PageImage(
+                index=index,
+                path=path,
+                width=pixmap.width,
+                height=pixmap.height,
+                image=image,
+                page_count=document.page_count,
+                text_chars=len("".join(text.split())),
+                text=text,
             )
-
-    return pages
 
 
 def _load_photograph(source_path: str, pages_dir: str) -> PageImage:

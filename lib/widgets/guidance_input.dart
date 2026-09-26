@@ -15,11 +15,24 @@ class GuidanceInput extends StatelessWidget {
     required this.controller,
     required this.onChanged,
     required this.onClear,
+    this.onLoadFile,
+    this.sourceFile,
+    this.paperScheme,
   });
 
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
   final VoidCallback? onClear;
+
+  /// Loads guidance from a text, Markdown or PDF file.
+  final VoidCallback? onLoadFile;
+
+  /// The file the current guidance came from, when it did.
+  final String? sourceFile;
+
+  /// How much of the question paper carries its own mark scheme, once the
+  /// paper has been read and found to print one.
+  final ({int withScheme, int questions})? paperScheme;
 
   @override
   Widget build(BuildContext context) {
@@ -27,15 +40,50 @@ class GuidanceInput extends StatelessWidget {
 
     return SectionCard(
       title: '3. Marking guidance (optional)',
-      trailing: OutlinedButton(onPressed: onClear, child: const Text('Clear')),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          OutlinedButton.icon(
+            onPressed: onLoadFile,
+            icon: const Icon(Icons.upload_file_outlined, size: 16),
+            label: const Text('Load file…'),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(onPressed: onClear, child: const Text('Clear')),
+        ],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          if (paperScheme case (withScheme: final int count, questions: final int total))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Icon(Icons.fact_check_outlined, size: 16, color: AppTheme.accent),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'The question paper includes a mark scheme for '
+                      '${count == total ? 'every question' : '$count of $total questions'}'
+                      ' — marking follows it. Anything added here is applied on '
+                      'top, and wins where the two differ.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Text(
-            'The marks come from the question paper. Add notes here only where '
-            'it leaves something unsaid — a question with no printed marks, or '
-            'how marks should divide within one. Where the two disagree, the '
-            'question paper wins.',
+            sourceFile != null
+                ? 'Loaded from $sourceFile. The question paper still decides '
+                    'what each question is worth; this guidance decides what '
+                    'earns the marks.'
+                : 'The marks come from the question paper. Add notes on what '
+                    'earns them — required points, accepted alternatives — and '
+                    'marking follows them. Without guidance, the marking points '
+                    'are inferred and shown for you to check.',
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: AppTheme.textSecondary),
           ),

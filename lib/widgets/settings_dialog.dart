@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:exam_corrector/app/app_theme.dart';
+import 'package:exam_corrector/core/config/app_config.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
 /// Where the teacher puts their API key.
@@ -43,6 +44,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late bool _ocrEnabled = widget.controller.config.ocrEnabled;
   late bool _visionCrossCheck = widget.controller.config.visionCrossCheck;
   late double _threshold = widget.controller.config.ocrConfidenceThreshold;
+  late final TextEditingController _visionModelField = TextEditingController(
+    text: widget.controller.config.visionModel ?? '',
+  );
+  late LayoutEngine _layout = widget.controller.config.layoutEngine;
+  late bool _visualAnalysis = widget.controller.config.visualAnalysis;
+  late double _reviewThreshold = widget.controller.config.reviewThreshold;
+  late bool _developerMode = widget.controller.config.developerMode;
 
   bool _obscured = true;
   bool _saving = false;
@@ -53,6 +61,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _modelField.dispose();
     _fallbackField.dispose();
     _trocrField.dispose();
+    _visionModelField.dispose();
     super.dispose();
   }
 
@@ -66,6 +75,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
       trocrModel: _trocrField.text,
       ocrThreshold: _threshold,
       visionCrossCheck: _visionCrossCheck,
+      layoutEngine: _layout,
+      visionModel: _visionModelField.text,
+      reviewThreshold: _reviewThreshold,
+      visualAnalysis: _visualAnalysis,
+      developerMode: _developerMode,
     );
     if (mounted) Navigator.of(context).pop();
   }
@@ -189,12 +203,114 @@ class _SettingsDialogState extends State<SettingsDialog> {
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 12),
+            Text('Page understanding', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<LayoutEngine>(
+              key: const Key('settings-layout-engine'),
+              initialValue: _layout,
+              isExpanded: true,
+              items: const <DropdownMenuItem<LayoutEngine>>[
+                DropdownMenuItem<LayoutEngine>(
+                  value: LayoutEngine.hybrid,
+                  child: Text('Hybrid — local first, vision model for complex pages'),
+                ),
+                DropdownMenuItem<LayoutEngine>(
+                  value: LayoutEngine.vision,
+                  child: Text('Vision model for every page'),
+                ),
+                DropdownMenuItem<LayoutEngine>(
+                  value: LayoutEngine.local,
+                  child: Text('Local only — offline, no API requests'),
+                ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (LayoutEngine? value) => setState(() => _layout = value ?? _layout),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'How each scanned page is divided into answers, diagrams, graphs, '
+              'tables and equations. Hybrid sends only pages with drawings or '
+              'content local analysis could not place — usually a few per script.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            Text('Vision model', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 6),
+            TextField(
+              key: const Key('settings-vision-model'),
+              controller: _visionModelField,
+              enabled: !_saving,
+              decoration: InputDecoration(
+                hintText: 'Leave empty to use $visionModel',
+              ),
+            ),
+            SwitchListTile(
+              key: const Key('settings-visual-analysis'),
+              value: _visualAnalysis,
+              onChanged: _saving
+                  ? null
+                  : (bool value) => setState(() => _visualAnalysis = value),
+              title: const Text('Analyse diagrams, graphs, tables and equations'),
+              subtitle: Text(
+                'Their images are always kept and shown to the marker; this adds '
+                'a structured description of each.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: AppTheme.textSecondary),
+              ),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Flag questions marked below ${(_reviewThreshold * 100).round()}% confidence',
+              style: theme.textTheme.titleSmall,
+            ),
+            Slider(
+              key: const Key('settings-review-threshold'),
+              value: _reviewThreshold,
+              min: 0.3,
+              max: 0.95,
+              divisions: 13,
+              label: '${(_reviewThreshold * 100).round()}%',
+              onChanged: _saving
+                  ? null
+                  : (double value) => setState(() => _reviewThreshold = value),
+            ),
+            SwitchListTile(
+              key: const Key('settings-developer-mode'),
+              value: _developerMode,
+              onChanged: _saving
+                  ? null
+                  : (bool value) => setState(() => _developerMode = value),
+              title: const Text('Developer mode'),
+              subtitle: Text(
+                'Adds the page inspector: every detected region, its type, '
+                'confidence, reading order and question.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: AppTheme.textSecondary),
+              ),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('settings-clear-cache'),
+                onPressed: _saving ? null : widget.controller.clearCache,
+                icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                label: const Text('Clear processing cache'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Divider(),
+            const SizedBox(height: 12),
             Text('Handwritten papers', style: theme.textTheme.titleSmall),
             const SizedBox(height: 6),
             Text(
-              'A scan or photograph with no text layer is read by Microsoft '
-              'TrOCR running on this machine. Turn this off to reject such '
-              'papers instead.',
+              'Handwriting is read region by region by Microsoft TrOCR running '
+              'on this machine. Turn this off to rely on the vision model alone.',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: AppTheme.textSecondary),
             ),
@@ -205,20 +321,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
               onChanged: _saving
                   ? null
                   : (bool value) => setState(() => _ocrEnabled = value),
-              title: const Text('Read handwriting'),
+              title: const Text('Read handwriting locally (TrOCR)'),
               contentPadding: EdgeInsets.zero,
               dense: true,
             ),
             SwitchListTile(
               key: const Key('settings-vision-cross-check'),
               value: _visionCrossCheck,
-              onChanged: _saving || !_ocrEnabled
+              onChanged: _saving
                   ? null
                   : (bool value) => setState(() => _visionCrossCheck = value),
-              title: const Text('Double-check uncertain lines'),
+              title: const Text('Double-check uncertain handwriting'),
               subtitle: Text(
-                'Sends only the low-confidence line images to $visionModel '
-                'for a second opinion. Costs API requests.',
+                'Sends only the low-confidence regions to the vision model for '
+                'a second opinion. Costs API requests.',
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: AppTheme.textSecondary),
               ),
@@ -227,7 +343,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
             const SizedBox(height: 10),
             Text(
-              'Flag lines below ${(_threshold * 100).round()}% confidence',
+              'Flag handwriting below ${(_threshold * 100).round()}% confidence',
               style: theme.textTheme.titleSmall,
             ),
             Slider(
@@ -237,7 +353,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               max: 0.99,
               divisions: 49,
               label: '${(_threshold * 100).round()}%',
-              onChanged: _saving || !_ocrEnabled
+              onChanged: _saving
                   ? null
                   : (double value) => setState(() => _threshold = value),
             ),

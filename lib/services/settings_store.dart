@@ -23,6 +23,13 @@ class SettingsStore {
       'EXAM_CORRECTOR_OCR_VISION_CHECK';
   static const String ocrDpiField = 'EXAM_CORRECTOR_OCR_DPI';
 
+  // Page understanding and marking.
+  static const String layoutEngineField = 'EXAM_CORRECTOR_LAYOUT_ENGINE';
+  static const String visionModelField = 'EXAM_CORRECTOR_VISION_MODEL';
+  static const String reviewThresholdField = 'EXAM_CORRECTOR_REVIEW_THRESHOLD';
+  static const String visualAnalysisField = 'EXAM_CORRECTOR_VISUAL_ANALYSIS';
+  static const String developerModeField = 'EXAM_CORRECTOR_DEBUG';
+
   /// Returns the stored values, or an empty map when nothing is saved yet.
   Future<Map<String, String>> read() async {
     final File? file = _file;
@@ -54,6 +61,11 @@ class SettingsStore {
     double? ocrThreshold,
     bool? visionCrossCheck,
     int? ocrDpi,
+    String? layoutEngine,
+    String? visionModel,
+    double? reviewThreshold,
+    bool? visualAnalysis,
+    bool? developerMode,
   }) async {
     final Map<String, String> values = Map<String, String>.from(await read());
 
@@ -84,6 +96,14 @@ class SettingsStore {
     }
     if (ocrDpi != null) values[ocrDpiField] = '$ocrDpi';
 
+    put(layoutEngineField, layoutEngine);
+    put(visionModelField, visionModel);
+    if (reviewThreshold != null) {
+      values[reviewThresholdField] = reviewThreshold.toStringAsFixed(2);
+    }
+    if (visualAnalysis != null) values[visualAnalysisField] = '$visualAnalysis';
+    if (developerMode != null) values[developerModeField] = '$developerMode';
+
     final File? file = _file;
     if (file == null) return;
 
@@ -95,6 +115,14 @@ class SettingsStore {
   String get location => _file?.path ?? 'unavailable on this platform';
 
   File? get _file {
+    final Directory? directory = supportDirectory();
+    if (directory == null) return null;
+    return File('${directory.path}${Platform.pathSeparator}settings.json');
+  }
+
+  /// The application's per-user folder: `%APPDATA%\Exam Corrector` on
+  /// Windows. Settings live here, and so does the processing cache.
+  static Directory? supportDirectory() {
     final Map<String, String> environment = Platform.environment;
     final String separator = Platform.pathSeparator;
 
@@ -114,6 +142,6 @@ class SettingsStore {
     }
 
     if (directory == null) return null;
-    return File('$directory${separator}settings.json');
+    return Directory(directory);
   }
 }
