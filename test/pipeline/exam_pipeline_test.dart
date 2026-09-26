@@ -6,11 +6,15 @@ import 'package:exam_corrector/core/async/cancellation.dart';
 import 'package:exam_corrector/core/config/app_config.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/domain/evidence.dart';
+import 'package:exam_corrector/domain/json_read.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/page_region.dart';
 import 'package:exam_corrector/domain/processing_job.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
+import 'package:exam_corrector/domain/syllabus.dart';
+import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
 import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/pipeline/alignment/label_boundary_detector.dart';
@@ -20,6 +24,8 @@ import 'package:exam_corrector/pipeline/document/page_analyzer.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
 import 'package:exam_corrector/pipeline/exam_pipeline.dart';
 import 'package:exam_corrector/pipeline/layout/text_layer_region_detector.dart';
+import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/services/review/teacher_work_store.dart';
 import 'package:exam_corrector/pipeline/recognition/ensemble_handwriting_recognizer.dart';
 import 'package:exam_corrector/pipeline/visual/visual_evidence_engine.dart';
 import 'package:exam_corrector/services/pdf_service.dart';
@@ -216,6 +222,7 @@ class _Marker implements MarkingEngine {
   AppException? error;
   int calls = 0;
   final List<String> marked = <String>[];
+  final List<MarkingTask> tasks = <MarkingTask>[];
 
   @override
   String get fingerprint => 'fake-mark';
@@ -230,6 +237,7 @@ class _Marker implements MarkingEngine {
   }) async {
     calls++;
     if (error != null) throw error!;
+    this.tasks.addAll(tasks);
     return <QuestionResult>[
       for (final MarkingTask task in tasks)
         () {
@@ -246,6 +254,38 @@ class _Marker implements MarkingEngine {
           );
         }(),
     ];
+  }
+}
+
+class _Keys implements AnswerKeyEngine {
+  int calls = 0;
+  CorrectionException? error;
+  final List<String> asked = <String>[];
+
+  @override
+  String get fingerprint => 'fake-key';
+
+  @override
+  Future<Map<String, AnswerKeyEntry>> prepare(
+    List<AnswerKeyTask> tasks, {
+    required String guidance,
+    required String course,
+    required MarkingStandard standard,
+    StageProgress? onProgress,
+    CancellationToken? cancel,
+  }) async {
+    calls++;
+    if (error != null) throw error!;
+    asked.addAll(tasks.map((AnswerKeyTask t) => t.question.questionId));
+    return <String, AnswerKeyEntry>{
+      for (final AnswerKeyTask t in tasks)
+        t.question.questionId: AnswerKeyEntry(
+          questionId: t.question.questionId,
+          maximum: t.question.maximumMarks!,
+          points: <AnswerKeyPoint>[AnswerKeyPoint(criterion: 'Key point for ${t.question.questionId}', marks: t.question.maximumMarks!)],
+          expectedWords: 40,
+        ),
+    };
   }
 }
 
@@ -306,6 +346,7 @@ void main() {
   ExamPipeline build({
     AppConfig config = pipelineConfig,
     AnswerBoundaryDetector boundaries = const LabelBoundaryDetector(),
+    AnswerKeyEngine? keys,
   }) =>
       ExamPipeline(
         pdf: const _Pdf(),
@@ -324,7 +365,53 @@ void main() {
         boundaries: boundaries,
         aligner: const PaperQuestionAligner(),
         marker: marker,
+        answerKeys: keys,
       );
+
+  group('the answer key', () {
+    test('is prepared once per paper, before marking, and every script is marked against it', () async {
+      final _Keys keys = _Keys();
+      await build(keys: keys).run(answerSheet: answers, questionPaper: questions);
+      expect(keys.calls, 1);
+      expect(keys.asked, isNotEmpty);
+      expect(marker.tasks.first.answerKey, startsWith('- Key point for ${marker.tasks.first.question.questionId}'));
+      expect(marker.tasks.first.expectedWords, 40);
+
+      // Another student's script: the same key, no new request.
+      final SelectedDocument other = await selected(workspace, 'other_answers.pdf', DocumentRole.answerSheet);
+      await build(keys: keys).run(answerSheet: other, questionPaper: questions);
+      expect(keys.calls, 1);
+
+      // The teacher can read the key the paper was marked against.
+      final JsonMap? saved = await TeacherWorkStore(store).answerKey(questions.contentHash);
+      expect(AnswerKey.entriesFromJson(saved), isNotEmpty);
+    });
+
+    test("the teacher's correction replaces the AI's key and re-marks", () async {
+      final _Keys keys = _Keys();
+      await build(keys: keys).run(answerSheet: answers, questionPaper: questions);
+      final int first = marker.calls;
+      final String id = marker.tasks.first.question.questionId;
+
+      await TeacherWorkStore(store).saveAnswerKeyEdits(questions.contentHash, <String, String>{
+        id: '- The organelle named correctly [2]\nA full answer: about 10 words.',
+      });
+      await build(keys: keys).run(answerSheet: answers, questionPaper: questions);
+      expect(marker.calls, greaterThan(first));
+      final MarkingTask remarked = marker.tasks.lastWhere((MarkingTask t) => t.question.questionId == id);
+      expect(remarked.answerKey, startsWith('- The organelle named correctly'));
+      expect(remarked.expectedWords, 10);
+      expect(keys.calls, 1);
+    });
+
+    test('a key that cannot be prepared does not stop marking', () async {
+      final _Keys keys = _Keys()..error = const CorrectionException('The AI is busy.');
+      final ExamAssessment assessment = await build(keys: keys).run(answerSheet: answers, questionPaper: questions);
+      expect(assessment.result, isNotNull);
+      expect(assessment.warnings.join(), contains('The answer key could not be prepared'));
+      expect(marker.tasks.every((MarkingTask t) => t.answerKey.isEmpty), isTrue);
+    });
+  });
 
   test('runs every stage and marks every question in the paper', () async {
     final List<ProcessingStage> seen = <ProcessingStage>[];
@@ -389,6 +476,109 @@ void main() {
     final int second = boundaries.calls;
     await build(boundaries: boundaries).run(answerSheet: answers, questionPaper: questions);
     expect(boundaries.calls, second);
+  });
+
+  test('rounding and penalties reuse the cached marks; a stricter level marks again', () async {
+    await build().run(answerSheet: answers, questionPaper: questions);
+    final int first = marker.calls;
+    expect(first, greaterThan(0));
+
+    final ExamAssessment rounded = await build().run(
+      answerSheet: answers,
+      questionPaper: questions,
+      standard: const MarkingStandard(markStep: 1, totalRounding: TotalRounding.up, mcqPenalty: 0.25),
+    );
+    expect(marker.calls, first);
+    expect(rounded.result!.totalRounding, TotalRounding.up);
+    expect(rounded.result!.standard, contains('whole marks'));
+
+    await build().run(
+      answerSheet: answers,
+      questionPaper: questions,
+      standard: const MarkingStandard(level: MarkingLevel.strict),
+    );
+    expect(marker.calls, greaterThan(first));
+    expect(marker.tasks.last.standard.level, MarkingLevel.strict);
+  });
+
+  group('the syllabus', () {
+    const Syllabus biology = Syllabus(
+      id: 'bio',
+      fileName: 'bio.txt',
+      courseTitle: 'Cell biology',
+      units: <SyllabusUnit>[
+        SyllabusUnit(number: 'I', title: 'Cells', topics: <String>['Explain something about cells', 'Organelles']),
+      ],
+    );
+
+    test("the teacher's choice is used, and each question gets its unit", () async {
+      final ExamAssessment assessment = await build().run(
+        answerSheet: answers,
+        questionPaper: questions,
+        syllabi: const <Syllabus>[biology],
+        syllabusChoice: 'bio',
+      );
+
+      expect(assessment.syllabus?.name, 'Cell biology');
+      expect(assessment.syllabus?.how, 'chosen by you');
+      expect(marker.tasks.first.syllabusCourse, startsWith('Cell biology'));
+      expect(marker.tasks.first.syllabus, startsWith('Unit I — Cells'));
+      expect(assessment.result!.questions.first.syllabusReference, 'Unit I — Cells');
+    });
+
+    test('the syllabus bonus is measured from cached marks, with no re-marking', () async {
+      await build().run(
+        answerSheet: answers,
+        questionPaper: questions,
+        syllabi: const <Syllabus>[biology],
+        syllabusChoice: 'bio',
+      );
+      final int first = marker.calls;
+      expect(marker.tasks.first.syllabusFocus, 'Explain something about cells');
+
+      final ExamAssessment withBonus = await build().run(
+        answerSheet: answers,
+        questionPaper: questions,
+        syllabi: const <Syllabus>[biology],
+        syllabusChoice: 'bio',
+        standard: const MarkingStandard(syllabusBonus: SyllabusBonus(enabled: true)),
+      );
+      expect(marker.calls, first);
+      expect(withBonus.result!.standard, contains('syllabus bonus'));
+      expect(
+        withBonus.result!.questions.every((QuestionResult q) => q.awardedMarks <= q.maximumMarks),
+        isTrue,
+      );
+    });
+
+    test('with no match the paper is marked without one, and the teacher is told', () async {
+      const Syllabus unrelated = Syllabus(
+        id: 'law',
+        fileName: 'law.txt',
+        courseTitle: 'Contract law',
+        units: <SyllabusUnit>[SyllabusUnit(number: 'I', title: 'Offer', topics: <String>['Acceptance'])],
+      );
+      final ExamAssessment assessment = await build().run(
+        answerSheet: answers,
+        questionPaper: questions,
+        syllabi: const <Syllabus>[unrelated],
+      );
+
+      expect(assessment.syllabus, isNull);
+      expect(assessment.warnings.join(), contains('No saved syllabus matches'));
+      expect(marker.tasks.every((MarkingTask t) => t.syllabusCourse.isEmpty), isTrue);
+    });
+
+    test('"No syllabus" is respected, silently', () async {
+      final ExamAssessment assessment = await build().run(
+        answerSheet: answers,
+        questionPaper: questions,
+        syllabi: const <Syllabus>[biology],
+        syllabusChoice: SyllabusLibrary.none,
+      );
+      expect(assessment.syllabus, isNull);
+      expect(assessment.warnings.join(), isNot(contains('syllabus')));
+    });
   });
 
   test('a second run reuses every stage from the cache', () async {

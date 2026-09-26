@@ -35,6 +35,10 @@ class AppTheme {
   static const Color caution = Color(0xFF9D5D00);
   static const Color cautionFill = Color(0xFFFFF4CE);
 
+  // The syllabus bonus: badges, and the marks and lines they touch.
+  static const Color gold = Color(0xFFB07D00);
+  static const Color goldFill = Color(0xFFFFF3CC);
+
   // Geometry.
   static const double cardRadius = 8;
   static const double controlRadius = 4;

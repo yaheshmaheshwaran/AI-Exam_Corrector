@@ -50,6 +50,17 @@ class FilePickerService {
     return <String>[for (final XFile file in files) file.path];
   }
 
+  /// A course syllabus as the college published it: a PDF with text, a
+  /// PowerPoint deck, a Word document, or a text file.
+  Future<String?> pickSyllabus() async {
+    final XFile? file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(label: 'Syllabus', extensions: <String>['pdf', 'pptx', 'docx', 'txt', 'md']),
+      ],
+    );
+    return file?.path;
+  }
+
   /// Marking guidance saved as a file: text, Markdown or a PDF.
   Future<String?> pickGuidance() async {
     final XFile? file = await openFile(

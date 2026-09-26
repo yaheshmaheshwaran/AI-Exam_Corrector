@@ -23,6 +23,7 @@ class ExamAssessment {
     required this.answers,
     this.result,
     this.warnings = const <String>[],
+    this.syllabus,
   });
 
   final ProcessingJob job;
@@ -36,6 +37,10 @@ class ExamAssessment {
 
   final CorrectionResult? result;
   final List<String> warnings;
+
+  /// The syllabus the paper was marked against, and how it was chosen;
+  /// null when none was used.
+  final ({String id, String name, String how})? syllabus;
 
   bool get isMarked => result != null;
 
@@ -65,6 +70,7 @@ class ExamAssessment {
       answers: answers ?? this.answers,
       result: result == null ? this.result : result(),
       warnings: warnings ?? this.warnings,
+      syllabus: syllabus,
     );
   }
 }

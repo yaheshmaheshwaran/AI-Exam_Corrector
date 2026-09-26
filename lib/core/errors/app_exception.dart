@@ -21,6 +21,17 @@ class PdfExtractionException extends AppException {
   const PdfExtractionException(super.message);
 }
 
+/// Something the results database cannot do: a request already open, a
+/// mark out of range.
+class ResultsException extends AppException {
+  const ResultsException(super.message);
+}
+
+/// A syllabus file could not be read or understood.
+class SyllabusException extends AppException {
+  const SyllabusException(super.message);
+}
+
 /// Correction failed for a reason the teacher should see.
 class CorrectionException extends AppException {
   const CorrectionException(
@@ -28,7 +39,12 @@ class CorrectionException extends AppException {
     this.transient = false,
     this.retryAfter,
     this.quotaExhausted = false,
+    this.dailyQuota = false,
   });
+
+  /// True when what ran out is the model's allowance for the day — which
+  /// comes back only when the provider resets it, not in a minute.
+  final bool dailyQuota;
 
   /// True when this model has no allowance left. Waiting will not help, but
   /// another model has its own quota, so marking moves on to the next one.

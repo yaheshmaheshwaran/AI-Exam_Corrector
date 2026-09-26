@@ -1,0 +1,47 @@
+SAMPLE SYLLABUS (test fixture, laid out like a university syllabus)
+Regulation 2021
+
+CCS356          INTERNET OF THINGS AND ITS APPLICATIONS          L T P C
+                                                                   2 0 2 3
+
+COURSE OBJECTIVES:
+ To understand the architecture of embedded systems and the Internet of Things.
+ To learn the communication protocols used in IoT.
+
+UNIT I          EMBEDDED SYSTEMS                                           9
+Embedded system definition and characteristics – Processor in an embedded system – Microcontrollers
+and microprocessors – Memory, timers and interrupts – Embedded software, firmware and device drivers –
+Real-time operating systems: task scheduling, priority inversion, inter-task communication.
+
+UNIT II         INTRODUCTION TO IoT                                        9
+Definition and characteristics of IoT – Physical design of IoT; things and protocols – Logical design
+of IoT; functional blocks, communication models and APIs – IoT enabling technologies; wireless sensor
+networks, cloud computing, big data analytics – IoT levels and deployment templates.
+
+UNIT III        IoT COMMUNICATION AND CONNECTIVITY                         9
+IoT protocol stack – IEEE 802.15.4, ZigBee, Bluetooth Low Energy – Wi-Fi and LoRaWAN – Application
+protocols: MQTT, CoAP, HTTP and REST – Publish/subscribe versus request/response – IPv6 and 6LoWPAN.
+
+UNIT IV         PROTOTYPING WITH ARDUINO AND RASPBERRY PI                  9
+Sensors and actuators – Arduino board, programming and interfacing – Raspberry Pi architecture and
+Python programming – Interfacing sensors with Raspberry Pi – Sending data to the cloud.
+
+UNIT V          IoT APPLICATIONS AND CASE STUDIES                          9
+Smart home and home automation – Smart city: smart parking, smart lighting – Industrial IoT and
+predictive maintenance – Smart agriculture – Health monitoring with wearables – IoT security and privacy.
+                                                                  TOTAL: 45 PERIODS
+
+COURSE OUTCOMES:
+At the end of the course, the students will be able to:
+CO1: Explain the architecture of embedded systems and real-time operating systems.
+CO2: Describe the physical and logical design of IoT.
+CO3: Compare IoT communication and application protocols.
+CO4: Build IoT prototypes with Arduino and Raspberry Pi.
+CO5: Design IoT solutions for real-world applications.
+
+TEXT BOOKS:
+1. Arshdeep Bahga and Vijay Madisetti, "Internet of Things – A Hands-on Approach", Universities Press, 2015.
+2. Raj Kamal, "Embedded Systems: Architecture, Programming and Design", McGraw Hill, 2017.
+
+REFERENCES:
+1. Adrian McEwen and Hakim Cassimally, "Designing the Internet of Things", Wiley, 2014.

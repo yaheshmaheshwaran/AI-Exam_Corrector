@@ -9,8 +9,15 @@ import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/pipeline/pipeline_factory.dart';
 import 'package:exam_corrector/services/ai/gemini_model_client.dart';
 import 'package:exam_corrector/services/ai/model_client.dart';
+import 'package:exam_corrector/services/ai/model_usage.dart';
 import 'package:exam_corrector/services/ocr/sidecar_client.dart';
 import 'package:exam_corrector/services/ocr/sidecar_process_service.dart';
+import 'package:exam_corrector/services/results/results_repository.dart';
+import 'package:exam_corrector/services/review/marking_standard_store.dart';
+import 'package:exam_corrector/services/settings_store.dart';
+import 'package:exam_corrector/services/syllabus/model_syllabus_structurer.dart';
+import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
+import 'package:exam_corrector/state/app_session.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
 /// Entry point: configuration → engines → pipeline → controller → window.
@@ -42,8 +49,29 @@ Future<void> main() async {
   );
   final SidecarClient sidecar = SidecarClient(process: process);
 
+  // Every request to the model is counted, and a model out of quota is
+  // remembered until its allowance resets — shown to the teacher in the bar.
+  final Directory? support = SettingsStore.supportDirectory();
+  final ModelUsageMonitor usage = ModelUsageMonitor(
+    file: support == null ? null : File('${support.path}${Platform.pathSeparator}model-usage.json'),
+  );
+  await usage.load();
+
+  // The results database — what students read and raise corrections in —
+  // beside the cache. Results published as files before it existed come in.
+  SqliteResultsRepository? results;
+  if (support != null) {
+    final String separator = Platform.pathSeparator;
+    try {
+      results = SqliteResultsRepository.open(File('${support.path}${separator}exam_corrector.db'));
+      await results.importFolder(Directory('${support.path}${separator}published'));
+    } on Exception {
+      results = null; // Marking still works; publishing is unavailable.
+    }
+  }
+
   // The only line that names a model provider.
-  final ModelClient models = GeminiModelClient(liveConfig);
+  final ModelClient models = GeminiModelClient(liveConfig, usage: usage);
 
   final PipelineFactory pipelines = PipelineFactory(
     config: liveConfig,
@@ -51,7 +79,20 @@ Future<void> main() async {
     models: models,
   );
 
-  controller = CorrectionController(config: config, pipeline: pipelines.build);
+  controller = CorrectionController(
+    config: config,
+    pipeline: pipelines.build,
+    // The teacher's syllabi, saved beside the cache; a layout the parser
+    // cannot read is read by the model, once, when it is added.
+    syllabusLibrary: SyllabusLibrary.standard(
+      structurer: ModelSyllabusStructurer(models, liveConfig),
+    ),
+    usage: usage,
+    standards: support == null
+        ? null
+        : MarkingStandardStore(File('${support.path}${Platform.pathSeparator}marking-standards.json')),
+    results: results,
+  );
 
   // The sidecar is a child process; leaving it running after the window closes
   // would strand a multi-gigabyte Python process on the teacher's machine.
@@ -74,5 +115,10 @@ Future<void> main() async {
     });
   }
 
-  runApp(ExamCorrectorApp(controller: controller));
+  runApp(ExamCorrectorApp(
+    controller: controller,
+    // Choosing a role is all it takes, for now.
+    session: AppSession(),
+    results: results,
+  ));
 }

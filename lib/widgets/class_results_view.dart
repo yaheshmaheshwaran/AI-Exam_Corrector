@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/models/section_totals.dart';
+import 'package:exam_corrector/domain/moderation.dart';
 import 'package:exam_corrector/state/marked_script.dart';
 
 /// The class at a glance: every student, their mark, and what is left to do.
@@ -16,7 +17,16 @@ class ClassResultsView extends StatefulWidget {
     required this.scripts,
     required this.onOpen,
     this.onRemove,
+    this.marksLookHigh = false,
+    this.agreement,
   });
+
+  /// How far the AI is from the teacher on the questions they marked.
+  final ({double before, double after, int questions})? agreement;
+
+  /// The class average is above what real classes get, and nothing
+  /// moderates it.
+  final bool marksLookHigh;
 
   final List<MarkedScript> scripts;
   final ValueChanged<int> onOpen;
@@ -62,6 +72,15 @@ class _ClassResultsViewState extends State<ClassResultsView> {
             _Figure('Scripts', '${widget.scripts.length}'),
             _Figure('Marked', '${marked.length}'),
             _Figure('To review', '$toReview'),
+            if (widget.agreement case final ({double before, double after, int questions}) a)
+              Tooltip(
+                message: 'On the ${a.questions} question${a.questions == 1 ? '' : 's'} you marked yourself. '
+                    'Before moderation the AI was ${Moderation.gap(a.before)}.',
+                child: _Figure(
+                  'AI vs you',
+                  a.after.abs() < 0.05 ? 'level' : '${a.after > 0 ? '+' : '−'}${a.after.abs().toStringAsFixed(1)} a question',
+                ),
+              ),
             if (percentages.isNotEmpty)
               _Figure(
                 'Class average',
@@ -71,6 +90,34 @@ class _ClassResultsViewState extends State<ClassResultsView> {
               ),
           ],
         ),
+        if (widget.marksLookHigh) ...<Widget>[
+          const SizedBox(height: 8),
+          Container(
+            key: const Key('class-marks-high'),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppTheme.cautionFill,
+              border: Border.all(color: AppTheme.caution.withValues(alpha: 0.35)),
+              borderRadius: BorderRadius.circular(AppTheme.controlRadius),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Icon(Icons.trending_up, size: 18, color: AppTheme.caution),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Marks look high for a real class — a class average above '
+                    '${Moderation.classHighAverage.round()}%. Open 2–3 scripts and mark or '
+                    'accept their questions yourself, then use "Moderate to your marking" to bring '
+                    'every script to your standard. Check the Answer key too.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 10),
         Expanded(
           child: LayoutBuilder(

@@ -15,8 +15,17 @@ import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
 import 'package:exam_corrector/pipeline/alignment/teacher_assignments.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
+import 'package:exam_corrector/domain/syllabus.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
 import 'package:exam_corrector/pipeline/marking/choice_resolver.dart';
+import 'package:exam_corrector/pipeline/marking/marking_rules.dart';
+import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/domain/moderation.dart';
+import 'package:exam_corrector/services/review/teacher_work_store.dart';
+import 'package:exam_corrector/pipeline/syllabus/syllabus_index.dart';
+import 'package:exam_corrector/pipeline/syllabus/syllabus_matcher.dart';
+import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
 import 'package:exam_corrector/pipeline/reconstruction/evidence_answer_reconstructor.dart';
 import 'package:exam_corrector/pipeline/recognition/ensemble_handwriting_recognizer.dart';
 import 'package:exam_corrector/pipeline/recognition/equation_promoter.dart';
@@ -53,6 +62,7 @@ class ExamPipeline {
     required AnswerBoundaryDetector boundaries,
     required QuestionAligner aligner,
     required MarkingEngine marker,
+    AnswerKeyEngine? answerKeys,
     PdfService pdf = const PdfService(),
   })  : _config = config,
         _store = store,
@@ -69,6 +79,7 @@ class ExamPipeline {
         _boundaries = boundaries,
         _aligner = aligner,
         _marker = marker,
+        _answerKeys = answerKeys,
         _pdf = pdf;
 
   final AppConfig Function() _config;
@@ -86,6 +97,9 @@ class ExamPipeline {
   final AnswerBoundaryDetector _boundaries;
   final QuestionAligner _aligner;
   final MarkingEngine _marker;
+
+  /// Prepares the answer key before marking; null marks without one.
+  final AnswerKeyEngine? _answerKeys;
   final PdfService _pdf;
   final EquationPromoter _equations = const EquationPromoter();
 
@@ -106,6 +120,10 @@ class ExamPipeline {
     String guidance = '',
     Map<String, String> teacherTranscriptions = const <String, String>{},
     Map<String, String> teacherAssignments = const <String, String>{},
+    List<Syllabus> syllabi = const <Syllabus>[],
+    String? syllabusChoice,
+    MarkingStandard standard = const MarkingStandard(),
+    Moderation moderation = Moderation.none,
     void Function(ProcessingJob job)? onUpdate,
     CancellationToken? cancel,
   }) async {
@@ -125,6 +143,8 @@ class ExamPipeline {
               _questions(questionPaper, job, cancel));
       job.update(counts: job.counts.copyWith(questions: questions.paper.markable.length));
       job.warn(questions.paper.warnings);
+      final ({Syllabus syllabus, String how})? syllabus =
+          _syllabusFor(questions.paper, syllabi, syllabusChoice, job);
 
       // 2. Render.
       final ({ExamDocument document, String key}) rendered =
@@ -209,6 +229,9 @@ class ExamPipeline {
         alignment: aligned.alignment,
         answers: answers,
         warnings: job.current.warnings,
+        syllabus: syllabus == null
+            ? null
+            : (id: syllabus.syllabus.id, name: syllabus.syllabus.name, how: syllabus.how),
       );
 
       // 9. Marking.
@@ -216,7 +239,7 @@ class ExamPipeline {
         final CorrectionResult result = await _stage(
           job,
           ProcessingStage.marking,
-          () => _mark(assessment, guidance, job, cancel),
+          () => _mark(assessment, questionPaper.contentHash, guidance, syllabus?.syllabus, standard, moderation, job, cancel),
         );
         job.finish(
           result.needsReviewCount > 0
@@ -847,13 +870,63 @@ class ExamPipeline {
     return evidence;
   }
 
+  /// The syllabus to mark against: the teacher's choice, or else the saved
+  /// one that matches the paper. Null when there is none — said so only when
+  /// the teacher has syllabi but none matched.
+  ({Syllabus syllabus, String how})? _syllabusFor(
+    QuestionPaper paper,
+    List<Syllabus> syllabi,
+    String? choice,
+    _Reporter job,
+  ) {
+    if (syllabi.isEmpty || choice == SyllabusLibrary.none) return null;
+    if (choice != null) {
+      for (final Syllabus syllabus in syllabi) {
+        if (syllabus.id == choice) return (syllabus: syllabus, how: 'chosen by you');
+      }
+    }
+    final SyllabusMatch? match = const SyllabusMatcher().best(
+      syllabi,
+      title: paper.title,
+      text: <String>[
+        for (final Question question in paper.markable) question.questionText,
+      ].join('\n'),
+    );
+    if (match == null) {
+      job.warn(<String>[
+        'No saved syllabus matches this question paper, so it was marked '
+            'without one. Choose one on the question paper if it should be used.',
+      ]);
+      return null;
+    }
+    return (syllabus: match.syllabus, how: 'matched by ${match.reason}');
+  }
+
   Future<CorrectionResult> _mark(
     ExamAssessment assessment,
+    String paperHash,
     String guidance,
+    Syllabus? syllabus,
+    MarkingStandard standard,
+    Moderation moderation,
     _Reporter job,
     CancellationToken? cancel,
   ) async {
     final QuestionPaper paper = assessment.questionPaper;
+    final SyllabusIndex? index = syllabus == null ? null : SyllabusIndex(syllabus);
+    SyllabusContext contextOf(Question question) =>
+        index?.contextFor(question.questionText, markScheme: paper.markSchemeFor(question)) ??
+        SyllabusContext.none;
+    final AnswerKey key = await _answerKey(
+      paper,
+      paperHash,
+      contextOf,
+      guidance: guidance,
+      course: index?.courseHeader ?? '',
+      standard: standard,
+      job: job,
+      cancel: cancel,
+    );
     final bool typed = assessment.answerSheet.source == DocumentSource.textLayer;
     final String hash = assessment.answerSheet.documentId;
     final List<MarkingTask> tasks = <MarkingTask>[
@@ -870,6 +943,15 @@ class ExamPipeline {
             [final first, ...] => paper.describeChoice(first.choice),
             _ => '',
           },
+          syllabus: contextOf(question).text,
+          syllabusLabel: contextOf(question).label,
+          syllabusFocus: contextOf(question).focus,
+          syllabusCourse: index?.courseHeader ?? '',
+          standard: standard,
+          answerKey: paper.markSchemeFor(question).trim().isEmpty ? key.textFor(question.questionId) : '',
+          expectedWords: paper.markSchemeFor(question).trim().isEmpty
+              ? key.expectedWordsFor(question.questionId)
+              : null,
         ),
     ];
 
@@ -881,6 +963,12 @@ class ExamPipeline {
           task.markScheme,
           task.paperGuidance,
           task.choice,
+          task.syllabus,
+          task.syllabusCourse,
+          task.answerKey,
+          // Only what changes the AI's judgement: rounding and penalties are
+          // applied afterwards, to cached marks as well.
+          if (standard.changesJudgement) standard.judgementKey,
           task.section?.toJson(),
           task.answer.toJson(),
           <String>[for (final MarkingImage image in task.images) image.regionId],
@@ -927,6 +1015,11 @@ class ExamPipeline {
       job.update(counts: job.counts.copyWith(questionsMarked: results.length));
     }
 
+    // The standard's arithmetic — rounding, the mark step, penalties — on
+    // every mark, fresh or cached.
+    final MarkingRules rules =
+        MarkingRules(standard, defaultReviewThreshold: _config().reviewThreshold, moderation: moderation);
+
     // Which options of an OR count is decided from the answer sheet: the
     // first answered.
     final Map<String, int> firstSeen = <String, int>{
@@ -937,7 +1030,11 @@ class ExamPipeline {
     final List<QuestionResult> ordered = const ChoiceResolver().resolve(
       paper,
       <QuestionResult>[
-        for (final MarkingTask task in tasks) results[task.question.questionId]!,
+        for (final MarkingTask task in tasks)
+          rules.apply(
+            results[task.question.questionId]!.copyWith(syllabusReference: task.syllabusLabel),
+            task,
+          ),
       ],
       firstSeen,
     );
@@ -945,7 +1042,84 @@ class ExamPipeline {
       for (final QuestionResult q in ordered)
         if (q.model.isNotEmpty) q.model,
     };
-    return CorrectionResult.fromQuestions(ordered, model: models.join(', '));
+    return CorrectionResult.fromQuestions(
+      ordered,
+      model: models.join(', '),
+      totalRounding: standard.totalRounding,
+      standard: standard.summary,
+    );
+  }
+
+  /// The paper's answer key: prepared once from the questions alone — never
+  /// from an answer — and shared by every script of the paper, with the
+  /// teacher's corrections over it. Questions the paper prints a scheme for
+  /// need none. A key that cannot be prepared is not fatal: the paper is
+  /// marked without one, and the teacher told.
+  Future<AnswerKey> _answerKey(
+    QuestionPaper paper,
+    String paperHash,
+    SyllabusContext Function(Question question) contextOf, {
+    required String guidance,
+    required String course,
+    required MarkingStandard standard,
+    required _Reporter job,
+    CancellationToken? cancel,
+  }) async {
+    final TeacherWorkStore work = TeacherWorkStore(_store);
+    final Map<String, String> edits = await work.answerKeyEdits(paperHash);
+    final AnswerKeyEngine? engine = _answerKeys;
+    final List<AnswerKeyTask> tasks = <AnswerKeyTask>[
+      for (final Question question in paper.markable)
+        if (paper.markSchemeFor(question).trim().isEmpty && (question.maximumMarks ?? 0) > 0)
+          AnswerKeyTask(
+            question: question,
+            section: paper.section(question.sectionId),
+            syllabus: contextOf(question).text,
+            choice: switch (paper.choicesOf(question.questionId)) {
+              [final first, ...] => paper.describeChoice(first.choice),
+              _ => '',
+            },
+          ),
+    ];
+    if (engine == null || tasks.isEmpty) return AnswerKey(edits: edits);
+
+    final String cacheKey = 'answer-key-${ArtifactStore.fingerprint(<Object?>[
+          engine.fingerprint,
+          guidance.trim(),
+          course,
+          standard.judgementKey,
+          for (final AnswerKeyTask task in tasks) <Object?>[task.question.toJson(), task.syllabus, task.choice],
+        ])}';
+    final JsonMap? cached = await _store.read(paperHash, cacheKey);
+    Map<String, AnswerKeyEntry> entries = AnswerKey.entriesFromJson(cached);
+    if (cached == null) {
+      try {
+        entries = await engine.prepare(
+          tasks,
+          guidance: guidance,
+          course: course,
+          standard: standard,
+          onProgress: (String message, double fraction) => job.progress(message, 0),
+          cancel: cancel,
+        );
+        if (entries.isNotEmpty) {
+          await _store.write(paperHash, cacheKey, AnswerKey(entries: entries).toJson());
+        }
+      } on CorrectionException catch (error) {
+        job.warn(<String>[
+          'The answer key could not be prepared (${error.message}); questions without a '
+              'printed mark scheme were marked without one.',
+        ]);
+        return AnswerKey(edits: edits);
+      }
+    }
+    final AnswerKey key = AnswerKey(entries: entries, edits: edits);
+    try {
+      await work.saveAnswerKey(paperHash, key.toJson());
+    } on IOException {
+      // Only the teacher's view of the key; marking has what it needs.
+    }
+    return key;
   }
 
   /// Where an answer begins on the answer sheet, as a sortable number.

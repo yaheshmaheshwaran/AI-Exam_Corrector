@@ -63,6 +63,35 @@ class TeacherWorkStore {
   ) =>
       _store.write(answerHash, _assignmentsKey(paperHash), Map<String, Object?>.of(assignments));
 
+  static const String _answerKeyKey = 'answer-key-latest';
+  static const String _answerKeyEditsKey = 'answer-key-edits';
+  static const String _moderationKey = 'moderation';
+
+  /// The answer key the paper was last marked against, as the pipeline
+  /// saved it.
+  Future<JsonMap?> answerKey(String paperHash) => _read(paperHash, _answerKeyKey);
+
+  Future<void> saveAnswerKey(String paperHash, JsonMap key) => _store.write(paperHash, _answerKeyKey, key);
+
+  /// The teacher's own key for questions, by question ID, in place of the
+  /// AI's.
+  Future<Map<String, String>> answerKeyEdits(String paperHash) async {
+    final JsonMap? saved = await _read(paperHash, _answerKeyEditsKey);
+    return <String, String>{
+      for (final MapEntry<String, Object?> entry in (saved ?? const <String, Object?>{}).entries)
+        if (readRawString(entry.value) case final String text when text.trim().isNotEmpty) entry.key: text,
+    };
+  }
+
+  Future<void> saveAnswerKeyEdits(String paperHash, Map<String, String> edits) =>
+      _store.write(paperHash, _answerKeyEditsKey, Map<String, Object?>.of(edits));
+
+  /// The teacher's marks the paper is moderated by, and the moderation in
+  /// force.
+  Future<JsonMap?> moderation(String paperHash) => _read(paperHash, _moderationKey);
+
+  Future<void> saveModeration(String paperHash, JsonMap value) => _store.write(paperHash, _moderationKey, value);
+
   /// Teacher work is read even when stage caching is turned off: it is the
   /// teacher's record, not a cache.
   Future<JsonMap?> _read(String hash, String key) async {

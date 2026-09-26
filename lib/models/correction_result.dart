@@ -1,4 +1,5 @@
 import 'package:exam_corrector/domain/json_read.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/models/question_result.dart';
 
 /// A validated correction, ready to display.
@@ -18,6 +19,8 @@ class CorrectionResult {
     required this.percentage,
     this.model = '',
     this.warnings = const <String>[],
+    this.totalRounding = TotalRounding.none,
+    this.standard = '',
   });
 
   /// Builds a result from per-question marks, computing the totals locally.
@@ -27,6 +30,8 @@ class CorrectionResult {
     List<QuestionResult> questions, {
     String model = '',
     List<String> warnings = const <String>[],
+    TotalRounding totalRounding = TotalRounding.none,
+    String standard = '',
   }) {
     final Iterable<QuestionResult> counted =
         questions.where((QuestionResult q) => q.counted);
@@ -38,17 +43,27 @@ class CorrectionResult {
       0,
       (double sum, QuestionResult q) => sum + q.maximumMarks,
     );
+    final double rounded = totalRounding.apply(total);
     return CorrectionResult(
       questions: questions,
-      totalMarks: total,
+      totalMarks: rounded,
       maximumTotalMarks: maximum,
-      percentage: maximum > 0 ? total / maximum * 100 : 0,
+      percentage: maximum > 0 ? rounded / maximum * 100 : 0,
       model: model,
       warnings: warnings,
+      totalRounding: totalRounding,
+      standard: standard,
     );
   }
 
   final List<QuestionResult> questions;
+
+  /// How the college rounds the total; applied to every total of this paper.
+  final TotalRounding totalRounding;
+
+  /// The marking standard it was marked to, in one line; empty for the
+  /// usual one.
+  final String standard;
   final double totalMarks;
   final double maximumTotalMarks;
   final double percentage;
@@ -86,6 +101,8 @@ class CorrectionResult {
   JsonMap toJson() => <String, Object?>{
         'model': model,
         'warnings': warnings,
+        if (totalRounding != TotalRounding.none) 'totalRounding': totalRounding.name,
+        if (standard.isNotEmpty) 'standard': standard,
         'questions': <JsonMap>[
           for (final QuestionResult question in questions) question.toJson(),
         ],
@@ -95,5 +112,7 @@ class CorrectionResult {
         readObjects(json['questions'], QuestionResult.fromJson),
         model: readString(json['model']) ?? '',
         warnings: readStringList(json['warnings']),
+        totalRounding: readEnum(TotalRounding.values, json['totalRounding'], TotalRounding.none),
+        standard: readRawString(json['standard']) ?? '',
       );
 }

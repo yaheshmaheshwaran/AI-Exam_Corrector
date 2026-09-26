@@ -1,5 +1,6 @@
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/evidence.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/student_answer.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
 
@@ -11,7 +12,7 @@ import 'package:exam_corrector/pipeline/engines.dart';
 class MarkingPrompt {
   const MarkingPrompt._();
 
-  static const String version = 'marking:v5';
+  static const String version = 'marking:v8';
 
   static const String systemPrompt = '''
 You are an experienced examiner marking a student's handwritten exam answers.
@@ -27,14 +28,46 @@ How the evidence is presented:
 - Crossed-out work is listed separately. It is not part of the final answer; do not credit it unless the student did not replace it with another attempt, and if you do rely on it, say so and set needs_review.
 
 Marking points:
+- If an ANSWER KEY is given for a question, it was fixed before any script was read. Take the marking points and what each is worth from it (source "key"). Do not invent other points, drop points, or reshape them to fit the answer in front of you. A printed mark scheme and the teacher's guidance still take precedence over it.
 - If the question paper prints a mark scheme for a question, it is the authority on what earns the marks: take the marking points and what each is worth from it (source "paper"), and apply its rules — what to accept and not accept, "any two of", method marks, error carried forward. Where it gives a bare correct answer full marks, do so.
 - If the teacher's marking guidance covers a question, it is an important marking constraint: take marking points from it (source "teacher"). It adds to a printed mark scheme, and where the two disagree the teacher's guidance wins.
-- Only when neither covers a question, decide the marking points a correct answer must contain, from the question wording, the subject and the marks available (source "inferred"). Make each point specific enough for a teacher to agree or disagree with.
+- Only when none of these covers a question, decide the marking points a correct answer must contain, from the question wording, the subject and the marks available (source "inferred"). Make each point specific enough for a teacher to agree or disagree with.
 - When the question itself lists what the answer must contain — "label the nucleus, the cell membrane and the cytoplasm", "label both axes", "show your working" — each listed item is a marking point of its own. Do not replace them with general points about quality.
 - A label earns its point only if it names the right thing and points at the right thing. A wrong label ("cell wall" on an animal cell) earns nothing, and it also counts against any point about the drawing being correct.
 - Do not award a point the student contradicts elsewhere in the same answer.
 - The marks available across a question's marking points must add up to exactly its maximum marks, and never more.
+
+The course syllabus, when given:
+- It shows what this course teaches for the question: its scope, the depth expected at this level, and the terms, models and methods students were taught. Use it to judge what a complete answer looks like in this course, and to recognise course-specific terminology in the student's answer.
+- It lists topics, not correct answers. It is a reference, never an answer key: your own subject knowledge decides whether an answer is right. Do not rely on the syllabus alone.
+- Never deduct marks because an answer includes correct material beyond the syllabus, or reaches a correct answer by an approach the syllabus does not mention. Never award marks merely for naming syllabus topics.
+- A printed mark scheme and the teacher's guidance take precedence over the syllabus.
+- When the syllabus shaped a marking point — the depth asked for, or a term the course uses — say so in that point's note.
 - Award marks point by point. A point never awards more than it is worth.
+
+How much each point earns — mark as a real examiner does:
+- A point earns part of its marks according to how well the answer develops it:
+  - only named, listed or mentioned: at most a quarter of the point's marks;
+  - correct, with a brief explanation: about half;
+  - explained accurately, with some detail: about three quarters;
+  - fully developed — explained, with the example, diagram or working the key expects: all of it.
+- Nothing is earned for restating or copying the question, general statements that would fit any question, material that is not about the point, or a point the answer contradicts.
+- Where the printed mark scheme awards a mark for a bare fact or answer, follow the scheme; grade by depth only where the scheme leaves the judgement to the examiner.
+- When you are torn between two marks, give the lower one. The student must show the point; the benefit of the doubt goes against the answer, not for it.
+- Full marks for a question only when every point is fully developed and there is no error. Full marks are rare.
+- Short answers, as a real examiner marks them:
+  - a 2-mark question: 2 only for a precise, complete answer with its key feature or term; 1 for one that is correct but vague, incomplete, or has a minor error; 0 for one that is wrong or irrelevant;
+  - a 1-mark question: 1 only for the exact answer.
+- Long answers: an average student's answer typically earns 35–55% of the marks; 70% or more needs every key point explained, with the diagram or example expected. A short answer to a long question earns little, however relevant its few lines are.
+
+quality_band — the answer as a whole, as an examiner's level of response:
+- "excellent": complete and accurate; every key point developed; the diagram or example expected is there.
+- "good": most key points, mostly accurate, with some development; minor gaps.
+- "satisfactory": about half the key points, briefly developed, or with some errors.
+- "weak": a few relevant points, mostly listed rather than explained, or with serious errors.
+- "poor": barely relevant — a fragment, or mostly wrong.
+- "none": nothing creditworthy, or no answer.
+The band must agree with the marks you award. band_reason: one line on why.
 
 Evidence, honestly:
 - Every point that awards any marks must cite the region IDs it was awarded for.
@@ -72,6 +105,36 @@ Evidence, honestly:
         ..writeln(paperGuidance)
         ..writeln();
     }
+    // The marking standard, when it asks for more or less than usual.
+    final MarkingStandard standard = tasks.first.standard;
+    if (standard.changesJudgement) {
+      out.writeln('MARKING STANDARD: ${standard.level.label} — ${standard.level.description}');
+      if (standard.level != MarkingLevel.balanced) {
+        out.writeln('Apply these rules to every question, within what the mark scheme '
+            "and the teacher's guidance allow:");
+        for (final ({String rule, String effect}) rule in standard.level.rules) {
+          // Rounding and the review threshold are applied afterwards, in code.
+          if (rule.rule == 'Rounding' || rule.rule == 'Review') continue;
+          out.writeln('- ${rule.rule}: ${rule.effect}');
+        }
+      }
+      if (standard.collegeRules.trim().isNotEmpty) {
+        out
+          ..writeln('COLLEGE RULES (binding, like the teacher’s guidance):')
+          ..writeln(standard.collegeRules.trim());
+      }
+      out.writeln();
+    }
+
+    final String course = tasks
+        .map((MarkingTask task) => task.syllabusCourse.trim())
+        .firstWhere((String text) => text.isNotEmpty, orElse: () => '');
+    if (course.isNotEmpty) {
+      out
+        ..writeln('COURSE SYLLABUS (reference — what this course teaches; not an answer key):')
+        ..writeln(course)
+        ..writeln();
+    }
     if (guidance.trim().isNotEmpty) {
       out
         ..writeln("TEACHER'S MARKING GUIDANCE:")
@@ -92,10 +155,18 @@ Evidence, honestly:
       out.writeln(wording.isEmpty
           ? 'Question: (not printed — the paper gives only its mark scheme)'
           : 'Question: $wording');
+      if (task.syllabus.trim().isNotEmpty) {
+        out.writeln('Syllabus reference (what the course teaches here — not an answer key): '
+            '${task.syllabus.trim()}');
+      }
       if (task.markScheme.trim().isNotEmpty) {
         out
           ..writeln('Mark scheme (printed on the question paper):')
           ..writeln(_indent(task.markScheme.trim()));
+      } else if (task.answerKey.trim().isNotEmpty) {
+        out
+          ..writeln('ANSWER KEY (fixed before marking — use these points; do not invent new ones):')
+          ..writeln(_indent(task.answerKey.trim()));
       }
       final double? maximum = task.question.maximumMarks;
       out.writeln(
@@ -228,7 +299,7 @@ Evidence, honestly:
             'maximum_marks': <String, Object?>{'type': 'number'},
             'marking_points_source': <String, Object?>{
               'type': 'string',
-              'enum': <String>['paper', 'teacher', 'inferred', 'mixed'],
+              'enum': <String>['paper', 'teacher', 'key', 'inferred', 'mixed'],
             },
             'marking_points': <String, Object?>{
               'type': 'array',
@@ -239,7 +310,7 @@ Evidence, honestly:
                   'description': <String, Object?>{'type': 'string'},
                   'source': <String, Object?>{
                     'type': 'string',
-                    'enum': <String>['paper', 'teacher', 'inferred'],
+                    'enum': <String>['paper', 'teacher', 'key', 'inferred'],
                   },
                   'marks_available': <String, Object?>{'type': 'number'},
                   'marks_awarded': <String, Object?>{'type': 'number'},
@@ -267,6 +338,11 @@ Evidence, honestly:
               },
             },
             'awarded_marks': <String, Object?>{'type': 'number'},
+            'quality_band': <String, Object?>{
+              'type': 'string',
+              'enum': <String>['excellent', 'good', 'satisfactory', 'weak', 'poor', 'none'],
+            },
+            'band_reason': <String, Object?>{'type': 'string'},
             'student_answer': <String, Object?>{'type': 'string'},
             'explanation': <String, Object?>{'type': 'string'},
             'confidence': <String, Object?>{'type': 'number'},
@@ -299,6 +375,8 @@ Evidence, honestly:
             'marking_points_source',
             'marking_points',
             'awarded_marks',
+            'quality_band',
+            'band_reason',
             'student_answer',
             'explanation',
             'confidence',

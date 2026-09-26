@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/evidence.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
@@ -17,6 +18,7 @@ import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 import 'package:exam_corrector/widgets/page_viewer.dart';
 import 'package:exam_corrector/widgets/results_view.dart';
+import 'package:exam_corrector/widgets/syllabus_badge.dart';
 
 /// Everything behind one question's mark, and the teacher's say over it.
 ///
@@ -212,7 +214,11 @@ class _Header extends StatelessWidget {
                   ],
                 ),
               ),
-            MarksBadge(awarded: finalMarks!, maximum: marked!.maximumMarks),
+            MarksBadge(
+              awarded: finalMarks!,
+              maximum: marked!.maximumMarks,
+              gold: marked!.syllabusBadge != SyllabusBadge.none,
+            ),
           ] else
             Text('Not marked', style: theme.textTheme.bodySmall),
           const SizedBox(width: 12),
@@ -284,6 +290,22 @@ class _EvidenceColumn extends StatelessWidget {
                         '${question.marksStated ? '' : ' (inferred)'}',
                 style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
               ),
+              if (marked?.syllabusReference case final String unit when unit.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 6),
+                Row(
+                  children: <Widget>[
+                    const Icon(Icons.menu_book_outlined, size: 15, color: AppTheme.textSecondary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Syllabus: $unit${assessment.syllabus == null ? '' : ' · ${assessment.syllabus!.name}'}'
+                        ' — marked against what this course teaches here',
+                        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               if (assessment.questionPaper.choicesOf(question.questionId) case [final first, ...]) ...<Widget>[
                 const SizedBox(height: 6),
                 Row(
@@ -813,12 +835,88 @@ class _MarkingColumn extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        if (result.syllabusAward case final SyllabusAward award) ...<Widget>[
+          _Panel(
+            key: const Key('syllabus-match-panel'),
+            title: 'Syllabus match',
+            subtitle: award.summary,
+            gold: true,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                if (award.hasBadge) ...<Widget>[
+                  SyllabusBadgeChip(badge: award.badge, bonus: award.bonus),
+                  const SizedBox(height: 8),
+                ] else
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('No badge — not close enough to the syllabus for this question.',
+                        style: theme.textTheme.bodySmall),
+                  ),
+                if (award.matched.isNotEmpty)
+                  Text('Covered: ${award.matched.join(', ')}',
+                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.gold)),
+                if (award.missing.isNotEmpty)
+                  Text('Not covered: ${award.missing.join(', ')}',
+                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppTheme.gap),
+        ],
+        if (result.adjustments.isNotEmpty) ...<Widget>[
+          _Panel(
+            title: 'Marking standard',
+            subtitle: 'The AI marked ${formatMarks(result.aiRawMarks ?? result.awardedMarks)}; '
+                'the paper’s standard changed it:',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                for (final String adjustment in result.adjustments)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Text(
+                      '•  $adjustment',
+                      style: adjustment.contains('syllabus bonus')
+                          ? theme.textTheme.bodySmall?.copyWith(color: AppTheme.gold, fontWeight: FontWeight.w600)
+                          : theme.textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppTheme.gap),
+        ],
+        if (result.qualityBand case final QualityBand band) ...<Widget>[
+          Container(
+            key: const Key('quality-band'),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.subtleBackground,
+              border: Border.all(color: AppTheme.stroke),
+              borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+            ),
+            child: Text.rich(
+              TextSpan(
+                children: <InlineSpan>[
+                  TextSpan(text: 'Quality: ${band.label}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  TextSpan(text: ' — ${result.bandReason.isEmpty ? band.description : result.bandReason}'),
+                ],
+              ),
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(height: AppTheme.gap),
+        ],
         _Panel(
           title: 'Marking points',
           subtitle: switch (result.markingPointsSource) {
             MarkingPointSource.teacherGuidance => 'From your marking guidance',
             MarkingPointSource.markScheme =>
               'From the mark scheme on the question paper',
+            MarkingPointSource.answerKey =>
+              'From the answer key, fixed before any script was read — '
+                  'open Answer key to change it',
             MarkingPointSource.inferred =>
               'Inferred by the AI from the question — check that they are the '
                   'points you would reward',
@@ -1332,7 +1430,10 @@ class _ChooseAnswerDialogState extends State<_ChooseAnswerDialog> {
 }
 
 class _Panel extends StatelessWidget {
-  const _Panel({required this.title, required this.child, this.subtitle});
+  const _Panel({super.key, required this.title, required this.child, this.subtitle, this.gold = false});
+
+  /// A gold frame and title, for the syllabus bonus.
+  final bool gold;
 
   final String title;
   final String? subtitle;
@@ -1344,14 +1445,14 @@ class _Panel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppTheme.cardBackground,
-        border: Border.all(color: AppTheme.stroke),
+        color: gold ? AppTheme.goldFill : AppTheme.cardBackground,
+        border: Border.all(color: gold ? AppTheme.gold.withValues(alpha: 0.5) : AppTheme.stroke),
         borderRadius: BorderRadius.circular(AppTheme.cardRadius),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Text(title, style: theme.textTheme.titleMedium),
+          Text(title, style: gold ? theme.textTheme.titleMedium?.copyWith(color: AppTheme.gold) : theme.textTheme.titleMedium),
           if (subtitle != null)
             Padding(
               padding: const EdgeInsets.only(top: 2),

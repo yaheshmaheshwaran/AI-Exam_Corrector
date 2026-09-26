@@ -19,7 +19,12 @@ class PdfUpload extends StatelessWidget {
     required this.onChoose,
     this.summary,
     this.onAdd,
+    this.footer,
   });
+
+  /// Shown under the file: for the question paper, the syllabus it is marked
+  /// against.
+  final Widget? footer;
 
   /// Shown instead of the file name — for a class set of scripts.
   final String? summary;
@@ -61,7 +66,18 @@ class PdfUpload extends StatelessWidget {
           ),
         ],
       ),
-      child: Container(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _file(context, chosen, ready),
+          if (footer != null) ...<Widget>[const SizedBox(height: 6), footer!],
+        ],
+      ),
+    );
+  }
+
+  Widget _file(BuildContext context, SelectedDocument? chosen, bool ready) {
+    return Container(
         height: 40,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
@@ -82,7 +98,7 @@ class PdfUpload extends StatelessWidget {
             else
               Icon(
                 ready
-                    ? (chosen.needsRendering ? Icons.draw_outlined : Icons.check_circle)
+                    ? ((chosen?.needsRendering ?? false) ? Icons.draw_outlined : Icons.check_circle)
                     : Icons.picture_as_pdf_outlined,
                 size: 16,
                 color: ready ? AppTheme.success : AppTheme.textSecondary,
@@ -99,8 +115,7 @@ class PdfUpload extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   String _label(SelectedDocument? document) {

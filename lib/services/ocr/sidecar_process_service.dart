@@ -332,15 +332,22 @@ class SidecarProcessService {
     );
   }
 
-  /// Walks up from the working directory looking for `pubspec.yaml`, the same
-  /// way [AppConfig] locates the project's `.env`.
+  /// Walks up looking for `pubspec.yaml`, the same way [AppConfig] locates
+  /// the project's `.env`: from the working directory, then from the
+  /// executable — an app opened from Finder runs with `/` as its working
+  /// directory, its executable deep inside the project's `build/`.
   Directory? _projectRoot() {
-    Directory directory = Directory.current;
-    for (int depth = 0; depth < 6; depth++) {
-      if (File('${directory.path}/pubspec.yaml').existsSync()) return directory;
-      final Directory parent = directory.parent;
-      if (parent.path == directory.path) break;
-      directory = parent;
+    for (final Directory start in <Directory>[
+      Directory.current,
+      File(Platform.resolvedExecutable).parent,
+    ]) {
+      Directory directory = start;
+      for (int depth = 0; depth < 12; depth++) {
+        if (File('${directory.path}/pubspec.yaml').existsSync()) return directory;
+        final Directory parent = directory.parent;
+        if (parent.path == directory.path) break;
+        directory = parent;
+      }
     }
     return null;
   }

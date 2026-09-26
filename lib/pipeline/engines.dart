@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:exam_corrector/core/async/cancellation.dart';
 import 'package:exam_corrector/domain/evidence.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/page_region.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/domain/student_answer.dart';
@@ -280,6 +281,13 @@ class MarkingTask {
     this.markScheme = '',
     this.paperGuidance = '',
     this.choice = '',
+    this.syllabus = '',
+    this.syllabusLabel = '',
+    this.syllabusFocus = '',
+    this.syllabusCourse = '',
+    this.standard = const MarkingStandard(),
+    this.answerKey = '',
+    this.expectedWords,
   });
 
   final Question question;
@@ -297,6 +305,30 @@ class MarkingTask {
   /// The choice this question is an option of, as it reads: "11(a) or
   /// 11(b)". Empty when it is not one.
   final String choice;
+
+  /// The part of the course syllabus the question falls under: its unit and
+  /// topics. Empty when no syllabus is used or no unit matched.
+  final String syllabus;
+
+  /// That unit's name, for display: "Unit III — Communication".
+  final String syllabusLabel;
+
+  /// The syllabus topics the question touches: what the syllabus bonus
+  /// measures an answer against. Not sent to the AI.
+  final String syllabusFocus;
+
+  /// The course the syllabus belongs to, when one is used.
+  final String syllabusCourse;
+
+  /// How strictly to judge, and the college's written rules.
+  final MarkingStandard standard;
+
+  /// The answer key fixed for the question before any script was read.
+  /// Empty when the paper prints a mark scheme for it, or no key was made.
+  final String answerKey;
+
+  /// About how long a full answer is, from the answer key.
+  final int? expectedWords;
 }
 
 /// An image of part of the student's answer, tied to its region.

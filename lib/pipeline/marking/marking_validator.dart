@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/evidence.dart';
 import 'package:exam_corrector/domain/json_read.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/student_answer.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
@@ -208,6 +209,8 @@ class MarkingValidator {
       ],
       markingPointsSource: _pointsSource(raw['marking_points_source'], points),
       model: model,
+      qualityBand: QualityBand.fromWire(raw['quality_band']),
+      bandReason: readRawString(raw['band_reason'])?.trim() ?? '',
     );
   }
 
@@ -240,14 +243,17 @@ class MarkingValidator {
   static MarkingPointSource _pointsSource(Object? raw, List<MarkingPoint> points) {
     if (raw == 'teacher') return MarkingPointSource.teacherGuidance;
     if (raw == 'paper') return MarkingPointSource.markScheme;
+    if (raw == 'key') return MarkingPointSource.answerKey;
     if (raw == 'mixed') {
       // Named for whichever supplied source most of the points came from.
       int count(MarkingPointSource source) =>
           points.where((MarkingPoint p) => p.source == source).length;
       final int teacher = count(MarkingPointSource.teacherGuidance);
       final int paper = count(MarkingPointSource.markScheme);
-      if (teacher > 0 && teacher >= paper) return MarkingPointSource.teacherGuidance;
-      if (paper > 0) return MarkingPointSource.markScheme;
+      final int key = count(MarkingPointSource.answerKey);
+      if (teacher > 0 && teacher >= paper && teacher >= key) return MarkingPointSource.teacherGuidance;
+      if (paper > 0 && paper >= key) return MarkingPointSource.markScheme;
+      if (key > 0) return MarkingPointSource.answerKey;
     }
     return MarkingPointSource.inferred;
   }

@@ -84,18 +84,24 @@ class TeacherReviewBook {
         Map<String, TeacherReview>.of(reviews)..remove(questionId),
       );
 
-  /// The mark that counts: the teacher's when they overrode it.
+  /// The mark that counts: the teacher's when they overrode it, and the one
+  /// they accepted when moderation has since moved the AI's — moderation is
+  /// for the questions the teacher has not marked.
   double finalMarks(QuestionResult question) {
     final TeacherReview? review = reviews[question.questionId];
     if (review != null && review.isOverride) return review.teacherMarks!;
+    if (review != null && review.status == ReviewStatus.accepted && question.moderatedFrom != null) {
+      return review.aiMarks;
+    }
     return question.awardedMarks;
   }
 
   /// Leaves out a question that is not counted — the other option of an OR —
   /// whatever the teacher gave it.
-  double finalTotal(CorrectionResult result) => result.questions
+  /// Rounded as the college rounds totals, when it does.
+  double finalTotal(CorrectionResult result) => result.totalRounding.apply(result.questions
       .where((QuestionResult q) => q.counted)
-      .fold<double>(0, (double sum, QuestionResult q) => sum + finalMarks(q));
+      .fold<double>(0, (double sum, QuestionResult q) => sum + finalMarks(q)));
 
   double finalPercentage(CorrectionResult result) =>
       result.maximumTotalMarks > 0

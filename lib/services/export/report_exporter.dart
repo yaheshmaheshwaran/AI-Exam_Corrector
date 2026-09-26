@@ -171,6 +171,8 @@ class ReportExporter {
         'Answer pages',
         'Explanation',
         'Counted',
+        'Adjustments',
+        'Syllabus badge',
       ].map(_cell).join(','));
 
     void question(QuestionResult q) {
@@ -190,6 +192,12 @@ class ReportExporter {
         q.answerPages.join(' '),
         q.evaluation,
         q.counted ? 'yes' : 'no — ${q.choiceNote}',
+        q.adjustments.join(' | '),
+        switch (q.syllabusAward) {
+          final SyllabusAward a when a.hasBadge =>
+            '${a.badge.label} (${a.percent}%)${a.bonus > 0 ? ' +${formatMarks(a.bonus)}' : ''}',
+          _ => '',
+        },
       ].map(_cell).join(','));
     }
 
@@ -218,6 +226,7 @@ class ReportExporter {
           '',
           section.title,
           '',
+          '',
         ].map(_cell).join(','));
       }
     }
@@ -237,6 +246,7 @@ class ReportExporter {
       '',
       formatPercentage(reviews.finalPercentage(result)),
       '',
+      result.standard.isEmpty ? '' : 'Marked to: ${result.standard}',
     ].map(_cell).join(','));
     return out.toString();
   }
@@ -315,12 +325,19 @@ class ReportExporter {
       }
       final TeacherReview? review = reviews[q.questionId];
       final bool overridden = review?.isOverride ?? false;
+      final SyllabusAward? award = q.syllabusAward;
+      final String badge = award == null || !award.hasBadge
+          ? ''
+          : ' <span class="tag gold">★ ${e(award.badge.label)}${award.bonus > 0 ? ' +${formatMarks(award.bonus)}' : ''}</span>';
       rows.writeln('<tr>'
           '<td>${e(q.questionNumber)}</td>'
           '<td class="n">${formatMarks(reviews.finalMarks(q))} / ${formatMarks(q.maximumMarks)}</td>'
-          '<td class="n">${formatMarks(q.awardedMarks)}${overridden ? ' <span class="tag">changed by teacher</span>' : ''}</td>'
+          '<td class="n">${formatMarks(q.awardedMarks)}'
+          '$badge'
+          '${overridden ? ' <span class="tag">changed by teacher</span>' : ''}</td>'
           '<td class="n">${(q.confidence * 100).round()}%${q.needsReview ? ' <span class="tag">review</span>' : ''}</td>'
           '<td>${q.counted ? '' : '<p><span class="tag">not counted</span> ${e(q.choiceNote)}</p>'}${e(q.evaluation)}'
+          '${q.adjustments.isEmpty ? '' : '<p class="comment">${q.adjustments.map(e).join('<br>')}</p>'}'
           '${q.markingPoints.isEmpty ? '' : '<ul>${q.markingPoints.map((MarkingPoint p) => '<li>${p.satisfied ? '✓' : '✗'} ${e(p.criterion)} (${formatMarks(p.marks)}/${formatMarks(p.marksAvailable)})${p.evidenceRegionIds.isEmpty ? '' : ' — page ${p.evidenceRegionIds.map((String id) => assessment.region(id)?.pageNumber ?? '?').toSet().join(', ')}'}</li>').join()}</ul>'}'
           '${review != null && review.comment.isNotEmpty ? '<p class="comment">Teacher: ${e(review.comment)}</p>' : ''}'
           '</td></tr>');
@@ -335,11 +352,12 @@ h1{font-size:20px;margin:0 0 4px}p.meta{color:#5d5d5d;margin:0 0 20px}
 table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e5e5;padding:8px;text-align:left;vertical-align:top;font-size:13px}
 th{background:#fafafa}td.n{white-space:nowrap}ul{margin:6px 0 0;padding-left:18px}
 .tag{font-size:11px;background:#fff4ce;color:#9d5d00;border-radius:3px;padding:1px 5px}
+.gold{background:#fff3cc;color:#b07d00;font-weight:600}
 .comment{color:#0067c0;margin:6px 0 0}.total{font-size:18px;margin-top:16px}
 tr.section td{background:#f0f6fc;font-weight:600}p.sections{color:#5d5d5d;margin:4px 0 0}
 </style></head><body>
 <h1>${e(assessment.answerSheet.fileName)}</h1>
-<p class="meta">Marked against ${e(assessment.questionPaper.title.isEmpty ? 'the question paper' : assessment.questionPaper.title)} · ${now.toLocal().toString().substring(0, 16)} · ${e(result.model)}</p>
+<p class="meta">Marked against ${e(assessment.questionPaper.title.isEmpty ? 'the question paper' : assessment.questionPaper.title)} · ${now.toLocal().toString().substring(0, 16)} · ${e(result.model)}${result.standard.isEmpty ? '' : ' · marked to ${e(result.standard)}'}</p>
 <table><thead><tr><th>Question</th><th>Final</th><th>AI mark</th><th>AI confidence</th><th>Reasoning</th></tr></thead>
 <tbody>
 $rows</tbody></table>

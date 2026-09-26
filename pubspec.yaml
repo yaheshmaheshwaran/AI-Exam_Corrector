@@ -27,6 +27,13 @@ dependencies:
   # PDF dependency; declared because the application uses it directly.
   crypto: ^3.0.6
 
+  # Reading syllabi saved as Word (.docx): a zip of XML. Pure Dart; xml is
+  # already present through the PDF dependency.
+  archive: ^4.0.9
+  xml: ^7.0.1
+  desktop_drop: ^0.8.4
+  sqlite3: ^3.5.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

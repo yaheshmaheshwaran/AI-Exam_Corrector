@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:exam_corrector/services/results/results_repository.dart';
+import 'package:exam_corrector/services/review/marking_standard_store.dart';
+import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
 import 'package:exam_corrector/core/async/cancellation.dart';
 import 'package:exam_corrector/core/config/app_config.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
@@ -48,6 +51,7 @@ class FakeFilePicker extends FilePickerService {
   final List<String?> _paths;
   int _calls = 0;
   String? guidancePath;
+  String? syllabusPath;
 
   /// When set, the next choice of answer sheets returns all of these: a
   /// teacher selecting a class set in one go.
@@ -81,6 +85,9 @@ class FakeFilePicker extends FilePickerService {
 
   @override
   Future<String?> pickGuidance() async => guidancePath;
+
+  @override
+  Future<String?> pickSyllabus() async => syllabusPath;
 
   @override
   Future<String?> pickSaveLocation({
@@ -486,6 +493,9 @@ CorrectionController fakeController({
   RecordingSettingsStore? settings,
   ArtifactStore? store,
   QuestionPaperExtractor? paper,
+  SyllabusLibrary? syllabi,
+  MarkingStandardStore? standards,
+  ResultsRepository? results,
 }) {
   final ArtifactStore artifacts = store ?? MemoryArtifactStore();
   late final CorrectionController controller;
@@ -501,6 +511,9 @@ CorrectionController fakeController({
     filePicker: picker ?? FakeFilePicker(answerPath, questionPath),
     settings: settings ?? RecordingSettingsStore(),
     pdfService: const FakePdf(),
+    syllabusLibrary: syllabi,
+    standards: standards,
+    results: results,
   );
   return controller;
 }

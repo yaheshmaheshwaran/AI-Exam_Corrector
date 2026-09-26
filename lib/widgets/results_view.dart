@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
+import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/domain/student_answer.dart';
@@ -9,6 +10,7 @@ import 'package:exam_corrector/domain/teacher_review.dart';
 import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/models/section_totals.dart';
+import 'package:exam_corrector/widgets/syllabus_badge.dart';
 
 /// The marked paper, section by section and question by question.
 ///
@@ -229,11 +231,20 @@ class _QuestionRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
+                if (question.syllabusAward case final SyllabusAward award when award.hasBadge && counted) ...<Widget>[
+                  SyllabusBadgeChip(badge: award.badge, bonus: award.bonus, tooltip: award.summary),
+                  const SizedBox(width: 6),
+                ],
                 if (!counted)
                   const _Tag(
                     label: 'Not counted',
                     icon: Icons.alt_route,
                     colour: AppTheme.textSecondary,
+                  )
+                else if (question.adjustments.isNotEmpty && status == ReviewStatus.pending && !question.needsReview)
+                  Tooltip(
+                    message: question.adjustments.join('\n'),
+                    child: const _Tag(label: 'Adjusted', icon: Icons.tune, colour: AppTheme.textSecondary),
                   )
                 else if (status == ReviewStatus.overridden)
                   const _Tag(label: 'Changed', icon: Icons.edit, colour: AppTheme.accent)
@@ -254,7 +265,11 @@ class _QuestionRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                MarksBadge(awarded: finalMarks, maximum: question.maximumMarks),
+                MarksBadge(
+                  awarded: finalMarks,
+                  maximum: question.maximumMarks,
+                  gold: counted && question.syllabusBadge != SyllabusBadge.none,
+                ),
                 const SizedBox(width: 4),
                 const Icon(Icons.chevron_right, size: 18),
               ],
@@ -394,21 +409,28 @@ class _UnmarkedRow extends StatelessWidget {
 
 /// Awarded out of maximum, coloured by how much was earned.
 class MarksBadge extends StatelessWidget {
-  const MarksBadge({super.key, required this.awarded, required this.maximum});
+  const MarksBadge({super.key, required this.awarded, required this.maximum, this.gold = false});
 
   final double awarded;
   final double maximum;
+
+  /// Gold for an answer that earned a syllabus badge.
+  final bool gold;
 
   @override
   Widget build(BuildContext context) {
     final bool full = maximum > 0 && awarded >= maximum;
     final bool none = awarded <= 0;
-    final Color foreground = full
+    final Color foreground = gold
+        ? AppTheme.gold
+        : full
         ? AppTheme.success
         : none
             ? AppTheme.danger
             : AppTheme.caution;
-    final Color background = full
+    final Color background = gold
+        ? AppTheme.goldFill
+        : full
         ? AppTheme.successFill
         : none
             ? AppTheme.dangerFill
@@ -589,6 +611,13 @@ class _TotalBar extends StatelessWidget {
                         key: const Key('section-breakdown'),
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall,
+                      ),
+                    if (result.standard.isNotEmpty)
+                      Text(
+                        'Marked to: ${result.standard}',
+                        key: const Key('marked-to'),
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
                       ),
                     if (reviews.overrideCount > 0 || outstanding > 0)
                       Text(

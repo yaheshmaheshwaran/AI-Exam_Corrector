@@ -12,6 +12,7 @@ import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/services/ai/gemini_client.dart';
 import 'package:exam_corrector/services/ai/gemini_model_client.dart';
 import 'package:exam_corrector/services/ai/model_client.dart';
+import 'package:exam_corrector/services/ai/model_usage.dart';
 
 const AppConfig _config = AppConfig(
   apiKey: 'test-key',
@@ -95,9 +96,11 @@ GeminiModelClient _client(
   Future<http.StreamedResponse> Function(http.BaseRequest request, String body) handler, {
   AppConfig config = _config,
   List<Duration> retryDelays = const <Duration>[],
+  ModelUsageMonitor? usage,
 }) {
   return GeminiModelClient(
     () => config,
+    usage: usage,
     client: GeminiClient(
       client: MockClient.streaming(
         (http.BaseRequest request, http.ByteStream body) async =>
@@ -497,6 +500,92 @@ void main() {
 
       expect(tried, <String>['gemini-3.6-flash', 'gemini-3.5-flash']);
       expect(response.model, 'gemini-3.5-flash');
+    });
+
+    group('counted and remembered by the usage monitor', () {
+      test('every request is counted, retries included, and a wait is shown', () async {
+        final ModelUsageMonitor usage = ModelUsageMonitor();
+        final List<ModelCallStatus> seen = <ModelCallStatus>[];
+        int sent = 0;
+        final GeminiModelClient client = _client(
+          (http.BaseRequest r, String body) async {
+            sent++;
+            if (sent == 1) {
+              seen.add(usage.active!.status);
+              return http.StreamedResponse(quota('GenerateRequestsPerMinutePerProjectPerModel-FreeTier'), 429);
+            }
+            seen.add(usage.active!.status);
+            return http.StreamedResponse(_sseFor(jsonEncode(_payload)), 200);
+          },
+          config: chained,
+          retryDelays: const <Duration>[Duration.zero, Duration.zero],
+          usage: usage,
+        );
+
+        await client.requestJson(_request(), models: chained.modelChain);
+
+        expect(usage.today['gemini-3.6-flash']!.requests, 2);
+        expect(usage.today['gemini-3.6-flash']!.rateLimited, 1);
+        expect(usage.requestsToday, 2);
+        expect(usage.active, isNull);
+        final ModelCall call = usage.recent.single;
+        expect(call.status, ModelCallStatus.succeeded);
+        expect(call.attempts, 2);
+        expect(call.purpose, 'marking');
+        expect(seen, <ModelCallStatus>[ModelCallStatus.running, ModelCallStatus.running]);
+      }, timeout: const Timeout(Duration(seconds: 20)));
+
+      test('a model out of its daily quota is not asked again today', () async {
+        final ModelUsageMonitor usage = ModelUsageMonitor();
+        final List<String> tried = <String>[];
+        final GeminiModelClient client = _client(
+          (http.BaseRequest r, String body) async {
+            final String model = (jsonDecode(body) as Map<String, dynamic>)['model'] as String;
+            tried.add(model);
+            return model == 'gemini-3.6-flash'
+                ? http.StreamedResponse(quota('GenerateRequestsPerDayPerProjectPerModel-FreeTier'), 429)
+                : http.StreamedResponse(_sseFor(jsonEncode(_payload)), 200);
+          },
+          config: chained,
+          retryDelays: const <Duration>[Duration.zero, Duration.zero],
+          usage: usage,
+        );
+
+        await client.requestJson(_request(), models: chained.modelChain);
+        expect(usage.isExhausted('gemini-3.6-flash'), isTrue);
+        expect(usage.exhaustedUntil('gemini-3.6-flash'), ModelUsageMonitor.nextQuotaReset(usage.now));
+
+        tried.clear();
+        await client.requestJson(_request(), models: chained.modelChain);
+        expect(tried, <String>['gemini-3.5-flash']);
+      });
+
+      test('with every model out of quota, nothing is sent and the reset time is given', () async {
+        final ModelUsageMonitor usage = ModelUsageMonitor();
+        final GeminiModelClient client = _client(
+          (http.BaseRequest r, String body) async =>
+              http.StreamedResponse(quota('GenerateRequestsPerDayPerProjectPerModel-FreeTier'), 429),
+          config: chained,
+          retryDelays: const <Duration>[Duration.zero, Duration.zero],
+          usage: usage,
+        );
+        await expectLater(
+          client.requestJson(_request(), models: chained.modelChain),
+          throwsA(isA<CorrectionException>()),
+        );
+        expect(usage.recent.single.status, ModelCallStatus.failed);
+        final int before = usage.requestsToday;
+
+        await expectLater(
+          client.requestJson(_request(), models: chained.modelChain),
+          throwsA(isA<CorrectionException>().having(
+            (CorrectionException e) => e.message,
+            'message',
+            allOf(contains('out of quota'), contains('comes back at')),
+          )),
+        );
+        expect(usage.requestsToday, before);
+      });
     });
 
     test('the quota window is read from the error details', () {

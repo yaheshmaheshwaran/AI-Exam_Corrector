@@ -72,6 +72,8 @@ class GeminiClient {
     required int maxTokens,
     required String effort,
     void Function(String message)? onProgress,
+    void Function()? onAttempt,
+    void Function(Duration wait, CorrectionException reason)? onWait,
     bool canSwitchModel = false,
     String retryingMessage = 'Retrying…',
     String endpoint = AppConstants.apiEndpoint,
@@ -84,6 +86,7 @@ class GeminiClient {
       cancel?.throwIfCancelled();
       try {
         if (attempt > 0) onProgress?.call(retryingMessage);
+        onAttempt?.call();
         return await send(
           apiKey: apiKey,
           model: model,
@@ -103,6 +106,7 @@ class GeminiClient {
         // A rate limit comes with the exact wait the API wants; a fixed short
         // backoff would simply be refused again.
         final Duration wait = waitFor(error, attempt);
+        onWait?.call(wait, error);
         onProgress?.call(
           'The API is rate limited — waiting ${wait.inSeconds}s and trying '
           'again…',
@@ -387,6 +391,7 @@ class GeminiClient {
           transient: true,
           retryAfter: retryAfter,
           quotaExhausted: window != QuotaWindow.perMinute,
+          dailyQuota: window == QuotaWindow.perDay,
         );
       case 503:
         return const CorrectionException(
