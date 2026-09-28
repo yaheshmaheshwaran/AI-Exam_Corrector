@@ -271,6 +271,15 @@ abstract class AnswerReconstructor {
   });
 }
 
+/// Where a question's key comes from.
+enum AnswerKeySource {
+  /// Prepared by the AI from the question alone.
+  ai,
+
+  /// The teacher's: their own answer key, or their correction of a line.
+  teacher,
+}
+
 /// One question to mark, with everything the marker should see.
 class MarkingTask {
   const MarkingTask({
@@ -287,6 +296,8 @@ class MarkingTask {
     this.syllabusCourse = '',
     this.standard = const MarkingStandard(),
     this.answerKey = '',
+    this.answerKeySource = AnswerKeySource.ai,
+    this.keyOption,
     this.expectedWords,
   });
 
@@ -326,6 +337,13 @@ class MarkingTask {
   /// The answer key fixed for the question before any script was read.
   /// Empty when the paper prints a mark scheme for it, or no key was made.
   final String answerKey;
+
+  /// Whose key [answerKey] is: the AI's, or the teacher's own.
+  final AnswerKeySource answerKeySource;
+
+  /// The right option when the teacher's key gives one for a multiple-choice
+  /// question: `b`.
+  final String? keyOption;
 
   /// About how long a full answer is, from the answer key.
   final int? expectedWords;

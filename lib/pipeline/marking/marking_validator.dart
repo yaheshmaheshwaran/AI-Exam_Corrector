@@ -117,7 +117,7 @@ class MarkingValidator {
           marksAvailable: available,
           evidenceRegionIds: evidence,
           basis: basis,
-          source: MarkingPointSource.fromWire(point['source']),
+          source: _source(MarkingPointSource.fromWire(point['source']), task),
           note: note,
         ),
       );
@@ -163,12 +163,22 @@ class MarkingValidator {
       answer.isEmpty ? 1 : answer.alignmentConfidence,
     ].reduce(math.min);
 
+    // Against the teacher's own key: an answer credited though it is not
+    // the key's answer goes to the teacher to check.
+    final bool teacherKey = task.answerKeySource == AnswerKeySource.teacher && task.answerKey.trim().isNotEmpty;
+    final KeyMatch? keyMatch = teacherKey ? KeyMatch.fromWire(raw['key_match']) : null;
+    final bool creditedDifferent = keyMatch == KeyMatch.equivalent && awarded > 0;
+    if (creditedDifferent) {
+      reasons.add('Credited an answer that differs from your answer key — check it.');
+    }
+
     final bool modelWantsReview = readBool(raw['needs_review']) ?? false;
     final List<String> modelReasons = readStringList(raw['review_reasons']);
     final bool needsReview = modelWantsReview ||
         confidence < reviewThreshold ||
         unsupported ||
         uncertainAward ||
+        creditedDifferent ||
         available > maximum + 0.001 ||
         printed == null;
 
@@ -207,8 +217,9 @@ class MarkingValidator {
               basis: EvidenceBasis.fromWire(reading['basis']),
             ),
       ],
-      markingPointsSource: _pointsSource(raw['marking_points_source'], points),
+      markingPointsSource: _source(_pointsSource(raw['marking_points_source'], points), task),
       model: model,
+      keyMatch: keyMatch,
       qualityBand: QualityBand.fromWire(raw['quality_band']),
       bandReason: readRawString(raw['band_reason'])?.trim() ?? '',
     );
@@ -237,6 +248,13 @@ class MarkingValidator {
     );
   }
 
+  /// A point from the key, when the key is the teacher's own, is from the
+  /// teacher's key — whatever the model called it.
+  static MarkingPointSource _source(MarkingPointSource source, MarkingTask task) =>
+      source == MarkingPointSource.answerKey && task.answerKeySource == AnswerKeySource.teacher
+          ? MarkingPointSource.teacherKey
+          : source;
+
   static String _alias(String cited) =>
       cited.trim().replaceAll(RegExp(r'^\[|\]$'), '').toUpperCase();
 
@@ -244,13 +262,16 @@ class MarkingValidator {
     if (raw == 'teacher') return MarkingPointSource.teacherGuidance;
     if (raw == 'paper') return MarkingPointSource.markScheme;
     if (raw == 'key') return MarkingPointSource.answerKey;
+    if (raw == 'teacher_key') return MarkingPointSource.teacherKey;
     if (raw == 'mixed') {
       // Named for whichever supplied source most of the points came from.
       int count(MarkingPointSource source) =>
           points.where((MarkingPoint p) => p.source == source).length;
       final int teacher = count(MarkingPointSource.teacherGuidance);
       final int paper = count(MarkingPointSource.markScheme);
+      final int own = count(MarkingPointSource.teacherKey);
       final int key = count(MarkingPointSource.answerKey);
+      if (own > 0 && own >= teacher && own >= paper && own >= key) return MarkingPointSource.teacherKey;
       if (teacher > 0 && teacher >= paper && teacher >= key) return MarkingPointSource.teacherGuidance;
       if (paper > 0 && paper >= key) return MarkingPointSource.markScheme;
       if (key > 0) return MarkingPointSource.answerKey;

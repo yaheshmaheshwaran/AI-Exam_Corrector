@@ -6,6 +6,7 @@ import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/question_label.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
+import 'package:exam_corrector/pipeline/marking/teacher_key.dart';
 import 'package:exam_corrector/services/ai/model_client.dart';
 
 /// One point of a question's answer key.
@@ -100,33 +101,68 @@ class AnswerKeyEntry {
   }
 }
 
-/// A paper's answer key: the AI's, with the teacher's corrections over it.
+/// A paper's answer key. For each question, the teacher's correction of the
+/// line wins, then the teacher's own answer key, then the AI's key.
 class AnswerKey {
   const AnswerKey({
     this.entries = const <String, AnswerKeyEntry>{},
+    this.teacher = const <String, TeacherKeyEntry>{},
     this.edits = const <String, String>{},
   });
 
   static const AnswerKey empty = AnswerKey();
 
+  /// The AI's key, by question ID.
   final Map<String, AnswerKeyEntry> entries;
 
-  /// The teacher's own key for a question, in place of the AI's.
+  /// The teacher's own answer key, as matched to the questions.
+  final Map<String, TeacherKeyEntry> teacher;
+
+  /// The teacher's correction of a question's line, in place of either key.
   final Map<String, String> edits;
 
-  bool get isEmpty => entries.isEmpty && edits.isEmpty;
+  bool get isEmpty => entries.isEmpty && teacher.isEmpty && edits.isEmpty;
 
   String textFor(String questionId) {
     final String? edited = edits[questionId];
     if (edited != null && edited.trim().isNotEmpty) return edited.trim();
+    return baseTextFor(questionId);
+  }
+
+  /// The key before the teacher's corrections: their own key's line, else
+  /// the AI's.
+  String baseTextFor(String questionId) {
+    final TeacherKeyEntry? own = teacher[questionId];
+    if (own != null && !own.isEmpty) return own.text;
     return entries[questionId]?.text ?? '';
+  }
+
+  AnswerKeySource? sourceFor(String questionId) {
+    if ((edits[questionId]?.trim() ?? '').isNotEmpty) return AnswerKeySource.teacher;
+    if (teacher[questionId] case final TeacherKeyEntry own when !own.isEmpty) return AnswerKeySource.teacher;
+    if (entries.containsKey(questionId)) return AnswerKeySource.ai;
+    return null;
+  }
+
+  /// The right option of a multiple-choice question, when the teacher's key
+  /// gives one — or their correction is nothing but an option.
+  String? optionFor(String questionId) {
+    final String? edited = edits[questionId];
+    if (edited != null && edited.trim().isNotEmpty) {
+      final RegExpMatch? only = RegExp(r'^\s*(?:(?:correct\s+)?option\s*:?\s*)?\(?\s*([a-e])\s*\)?\s*\.?\s*$',
+              caseSensitive: false)
+          .firstMatch(edited);
+      return only?.group(1)!.toLowerCase();
+    }
+    return teacher[questionId]?.option;
   }
 
   /// The teacher's key may state a length: "about 300 words".
   int? expectedWordsFor(String questionId) {
-    final String? edited = edits[questionId];
-    if (edited != null && edited.trim().isNotEmpty) {
-      final RegExpMatch? stated = RegExp(r'(\d{2,4})\s*words', caseSensitive: false).firstMatch(edited);
+    final AnswerKeySource? source = sourceFor(questionId);
+    if (source == AnswerKeySource.teacher) {
+      final RegExpMatch? stated =
+          RegExp(r'(\d{2,4})\s*words', caseSensitive: false).firstMatch(textFor(questionId));
       return stated == null ? null : int.parse(stated.group(1)!);
     }
     return entries[questionId]?.expectedWords;

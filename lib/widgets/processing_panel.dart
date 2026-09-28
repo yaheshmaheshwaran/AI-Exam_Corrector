@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/domain/processing_job.dart';
+import 'package:exam_corrector/widgets/ui/ui.dart';
 
 /// What processing is doing, and what it has found so far.
 ///
@@ -13,7 +13,6 @@ class ProcessingPanel extends StatelessWidget {
   const ProcessingPanel({
     super.key,
     required this.job,
-    required this.onCancel,
     this.scriptLabel,
   });
 
@@ -21,11 +20,9 @@ class ProcessingPanel extends StatelessWidget {
 
   /// Which script of a class is being processed.
   final String? scriptLabel;
-  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
     final ProcessingCounts counts = job.counts;
     final int percent = (job.overallFraction * 100).round();
 
@@ -35,59 +32,53 @@ class ProcessingPanel extends StatelessWidget {
         children: <Widget>[
           if (scriptLabel != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(scriptLabel!, style: theme.textTheme.titleSmall),
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(scriptLabel!, style: context.text.titleSmall),
             ),
-          Wrap(
-            spacing: 28,
-            runSpacing: 8,
+          // The three numbers that answer "how far along is it?", side by
+          // side in one strip.
+          _Figures(
             children: <Widget>[
-              _Figure(
+              StatTile(
                 label: 'Pages',
-                value: counts.pagesTotal == 0
-                    ? '—'
-                    : '${counts.pagesDone} / ${counts.pagesTotal}',
+                value: counts.pagesTotal == 0 ? '—' : '${counts.pagesDone} / ${counts.pagesTotal}',
               ),
-              _Figure(label: 'Current stage', value: job.stage.label),
-              _Figure(label: 'Overall progress', value: '$percent%'),
+              StatTile(label: 'Current stage', value: job.stage.label),
+              StatTile(label: 'Overall progress', value: '$percent%', tone: ToneKind.primary),
             ],
           ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              key: const Key('processing-progress'),
-              value: job.overallFraction > 0 ? job.overallFraction : null,
-              minHeight: 6,
-            ),
+          const SizedBox(height: 14),
+          SmoothProgress(
+            key: const Key('processing-progress'),
+            value: job.overallFraction,
+            minHeight: 6,
           ),
           const SizedBox(height: 8),
-          Text(
-            job.message,
-            key: const Key('processing-message'),
-            style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
-          ),
-          const SizedBox(height: 14),
-          Text('Detected', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 6),
+          Text(job.message, key: const Key('processing-message'), style: context.text.caption),
+          const SizedBox(height: 20),
+          Text('Detected', style: context.text.titleSmall),
+          const SizedBox(height: 8),
           Wrap(
-            spacing: 8,
+            spacing: 6,
             runSpacing: 6,
             children: <Widget>[
-              _Count('Questions', counts.questions),
-              _Count('Answer regions', counts.answerRegions),
-              _Count('Handwriting regions', counts.handwritingRegions),
-              _Count('Diagrams', counts.diagrams),
-              _Count('Graphs', counts.graphs),
-              _Count('Tables', counts.tables),
-              _Count('Equations', counts.equations),
-              _Count('Crossed out', counts.crossedOut),
-              if (counts.questionsMarked > 0) _Count('Marked', counts.questionsMarked),
+              for (final (String label, int value) in <(String, int)>[
+                ('Questions', counts.questions),
+                ('Answer regions', counts.answerRegions),
+                ('Handwriting regions', counts.handwritingRegions),
+                ('Diagrams', counts.diagrams),
+                ('Graphs', counts.graphs),
+                ('Tables', counts.tables),
+                ('Equations', counts.equations),
+                ('Crossed out', counts.crossedOut),
+                if (counts.questionsMarked > 0) ('Marked', counts.questionsMarked),
+              ])
+                StatusPill(label: '$label: $value'),
             ],
           ),
-          const SizedBox(height: 14),
-          Text('Stages', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 4),
+          const SizedBox(height: 20),
+          Text('Stages', style: context.text.titleSmall),
+          const SizedBox(height: 6),
           for (final ProcessingStage stage in ProcessingStage.pipeline)
             _StageRow(
               stage: stage,
@@ -95,53 +86,64 @@ class ProcessingPanel extends StatelessWidget {
               active: job.stage == stage,
               reused: job.reusedStages.contains(stage),
             ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: onCancel,
-            icon: const Icon(Icons.stop_circle_outlined, size: 16),
-            label: const Text('Cancel'),
-          ),
         ],
       ),
     );
   }
 }
 
-class _Figure extends StatelessWidget {
-  const _Figure({required this.label, required this.value});
+/// Figures in one bordered strip, divided by hairlines; they wrap onto
+/// their own rows when the pane is narrow.
+class _Figures extends StatelessWidget {
+  const _Figures({required this.children});
 
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(label, style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
-        Text(value, style: theme.textTheme.titleMedium),
-      ],
-    );
-  }
-}
-
-class _Count extends StatelessWidget {
-  const _Count(this.label, this.value);
-
-  final String label;
-  final int value;
+  final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: AppTheme.pageBackground,
-        border: Border.all(color: AppTheme.stroke),
-        borderRadius: BorderRadius.circular(AppTheme.controlRadius),
-      ),
-      child: Text('$label: $value', style: const TextStyle(fontSize: 12)),
+    final AppColors c = context.colors;
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool row = constraints.maxWidth >= 420;
+        return Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: c.border),
+            borderRadius: BorderRadius.circular(AppTheme.controlRadius + 2),
+          ),
+          child: row
+              ? IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      for (int i = 0; i < children.length; i++)
+                        Expanded(
+                          flex: i == 1 ? 2 : 1,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              border: i == 0 ? null : Border(left: BorderSide(color: c.border)),
+                            ),
+                            child: children[i],
+                          ),
+                        ),
+                    ],
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    for (int i = 0; i < children.length; i++)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          border: i == 0 ? null : Border(top: BorderSide(color: c.border)),
+                        ),
+                        child: children[i],
+                      ),
+                  ],
+                ),
+        );
+      },
     );
   }
 }
@@ -161,34 +163,35 @@ class _StageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final AppColors c = context.colors;
     final Widget icon = done
-        ? const Icon(Icons.check_circle, size: 14, color: AppTheme.success)
+        ? Icon(Icons.check_circle, size: 15, color: c.success)
         : active
-            ? const SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(strokeWidth: 1.8),
-              )
-            : const Icon(Icons.radio_button_unchecked, size: 14, color: AppTheme.textDisabled);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+            ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.8))
+            : Icon(Icons.radio_button_unchecked, size: 15, color: c.textFaint);
+    // The stage running now is picked out, so the list reads at a glance.
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: active ? c.primarySoft : null,
+        borderRadius: BorderRadius.circular(AppTheme.controlRadius),
+      ),
       child: Row(
         children: <Widget>[
           SizedBox(width: 18, child: Center(child: icon)),
-          const SizedBox(width: 6),
-          Text(
-            stage.label,
-            style: TextStyle(
-              fontSize: 12.5,
-              color: done || active ? AppTheme.textPrimary : AppTheme.textDisabled,
-              fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              stage.label,
+              overflow: TextOverflow.ellipsis,
+              style: context.text.small.copyWith(
+                color: done || active ? c.text : c.textFaint,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+              ),
             ),
           ),
-          if (reused)
-            const Text(
-              '  · from the last run',
-              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-            ),
+          if (reused) Text('  · from the last run', style: context.text.caption),
         ],
       ),
     );

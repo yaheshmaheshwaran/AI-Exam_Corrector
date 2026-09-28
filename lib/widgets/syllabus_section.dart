@@ -1,11 +1,10 @@
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/domain/syllabus.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
-import 'package:exam_corrector/widgets/section_card.dart';
 import 'package:exam_corrector/widgets/syllabus_library_dialog.dart';
+import 'package:exam_corrector/widgets/ui/ui.dart';
 
 /// The uploaded syllabus files, always in view on the main screen: each file,
 /// the courses read from it, and which one the chosen paper is marked
@@ -38,25 +37,21 @@ class _SyllabusSectionState extends State<SyllabusSection> {
     // Courses grouped by the file they were read from, in upload order.
     final Map<String, List<Syllabus>> files = <String, List<Syllabus>>{};
     final List<Syllabus> ordered = List<Syllabus>.of(controller.syllabi)
-      ..sort((Syllabus a, Syllabus b) =>
-          (a.addedAt ?? DateTime(0)).compareTo(b.addedAt ?? DateTime(0)));
+      ..sort(
+        (Syllabus a, Syllabus b) =>
+            (a.addedAt ?? DateTime(0)).compareTo(b.addedAt ?? DateTime(0)),
+      );
     for (final Syllabus syllabus in ordered) {
       files.putIfAbsent(syllabus.sourceId, () => <Syllabus>[]).add(syllabus);
     }
     final String? inUse = controller.syllabusInUse?.name;
 
-    return SectionCard(
-      title: 'Syllabi (${controller.syllabi.length})',
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          OutlinedButton.icon(
-            key: const Key('syllabus-section-add'),
-            onPressed: busy ? null : controller.addSyllabus,
-            icon: const Icon(Icons.upload_file_outlined, size: 16),
-            label: const Text('Add…'),
-          ),
-        ],
+    return RailSection(
+      label: 'Syllabi (${controller.syllabi.length})',
+      trailing: TextButton(
+        key: const Key('syllabus-section-add'),
+        onPressed: busy ? null : controller.addSyllabus,
+        child: const Text('Add…'),
       ),
       child: DropTarget(
         enable: !busy,
@@ -68,15 +63,20 @@ class _SyllabusSectionState extends State<SyllabusSection> {
             for (final DropItem item in details.files) item.path,
           ]);
         },
-        child: AnimatedContainer(
+        child: Container(
           key: const Key('syllabus-section-drop'),
-          duration: const Duration(milliseconds: 120),
-          height: 118,
+          // Empty, it is as tall as its hint; with files, a fixed list.
+          height: files.isEmpty ? null : 150,
+          constraints: files.isEmpty
+              ? const BoxConstraints(minHeight: 96)
+              : null,
           decoration: BoxDecoration(
-            color: _hovering ? const Color(0xFFEAF3FC) : null,
+            color: _hovering
+                ? context.colors.primarySoft
+                : context.colors.surfaceMuted,
             border: Border.all(
-              color: _hovering ? AppTheme.accent : AppTheme.stroke,
-              width: _hovering ? 2 : 1,
+              color: _hovering ? context.colors.primary : context.colors.border,
+              width: _hovering ? 1.5 : 1,
             ),
             borderRadius: BorderRadius.circular(AppTheme.controlRadius),
           ),
@@ -85,7 +85,11 @@ class _SyllabusSectionState extends State<SyllabusSection> {
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Row(
                     children: <Widget>[
-                      const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
@@ -105,45 +109,46 @@ class _SyllabusSectionState extends State<SyllabusSection> {
                   ),
                 )
               : files.isEmpty || _hovering
-                  ? _Hint(hovering: _hovering, onTap: busy ? null : controller.addSyllabus)
-                  : Scrollbar(
-                      controller: _scroll,
-                      thumbVisibility: true,
-                      child: ListView(
-                        controller: _scroll,
-                        padding: const EdgeInsets.fromLTRB(8, 6, 14, 6),
-                        children: <Widget>[
-                          for (final MapEntry<String, List<Syllabus>> file in files.entries)
-                            _File(
-                              courses: file.value,
-                              inUse: inUse,
-                              busy: busy,
-                              onRemove: () => _confirmRemove(context, file.value),
-                            ),
-                        ],
-                      ),
-                    ),
+              ? _Hint(
+                  hovering: _hovering,
+                  onTap: busy ? null : controller.addSyllabus,
+                )
+              : Scrollbar(
+                  controller: _scroll,
+                  thumbVisibility: true,
+                  child: ListView(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(8, 6, 14, 6),
+                    children: <Widget>[
+                      for (final MapEntry<String, List<Syllabus>> file
+                          in files.entries)
+                        _File(
+                          courses: file.value,
+                          inUse: inUse,
+                          busy: busy,
+                          onRemove: () => _confirmRemove(context, file.value),
+                        ),
+                    ],
+                  ),
+                ),
         ),
       ),
     );
   }
 
-  Future<void> _confirmRemove(BuildContext context, List<Syllabus> courses) async {
-    final bool? sure = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('Remove this syllabus file?'),
-        content: Text(courses.length == 1
-            ? '${courses.single.name} will no longer be used for marking.'
-            : 'All ${courses.length} courses read from ${courses.first.fileName} will '
-                'no longer be used for marking.'),
-        actions: <Widget>[
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Remove')),
-        ],
-      ),
+  Future<void> _confirmRemove(
+    BuildContext context,
+    List<Syllabus> courses,
+  ) async {
+    final bool sure = await confirmDialog(
+      context,
+      title: 'Remove this syllabus file?',
+      message: courses.length == 1
+          ? '${courses.single.name} will no longer be used for marking.'
+          : 'All ${courses.length} courses read from ${courses.first.fileName} will '
+                'no longer be used for marking.',
     );
-    if (sure ?? false) await widget.controller.removeSyllabusFile(courses.first.sourceId);
+    if (sure) await widget.controller.removeSyllabusFile(courses.first.sourceId);
   }
 }
 
@@ -155,21 +160,36 @@ class _Hint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
     return InkWell(
       onTap: onTap,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(Icons.file_download_outlined,
-                size: 24, color: hovering ? AppTheme.accent : AppTheme.textSecondary),
-            const SizedBox(height: 4),
-            Text(hovering ? 'Drop to add' : 'Drop syllabus files here, or click to choose',
-                style: theme.textTheme.titleSmall),
-            Text('PDF, PowerPoint (.pptx), Word (.docx), .txt or .md',
-                style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
-          ],
+      borderRadius: BorderRadius.circular(AppTheme.controlRadius),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                Icons.file_download_outlined,
+                size: 20,
+                color: hovering
+                    ? context.colors.primary
+                    : context.colors.textFaint,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                hovering
+                    ? 'Drop to add'
+                    : 'Drop syllabus files here, or click to choose',
+                textAlign: TextAlign.center,
+                style: context.text.small.copyWith(fontWeight: FontWeight.w500),
+              ),
+              Text(
+                'PDF, .pptx, .docx, .txt or .md',
+                style: context.text.caption,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -210,7 +230,7 @@ class _File extends StatelessWidget {
                   _ => Icons.description_outlined,
                 },
                 size: 16,
-                color: AppTheme.accent,
+                color: context.colors.primary,
               ),
               const SizedBox(width: 6),
               Expanded(
@@ -221,10 +241,16 @@ class _File extends StatelessWidget {
                   style: theme.textTheme.titleSmall,
                 ),
               ),
-              Text(
-                '${courses.length == 1 ? '1 course' : '${courses.length} courses'}'
-                '${added == null ? '' : ' · ${added.toString().substring(0, 10)}'}',
-                style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+              Tooltip(
+                message: added == null
+                    ? ''
+                    : 'Added ${added.toString().substring(0, 10)}',
+                child: Text(
+                  courses.length == 1
+                      ? '1 course'
+                      : '${courses.length} courses',
+                  style: context.text.caption,
+                ),
               ),
               IconButton(
                 tooltip: 'Remove this file',
@@ -234,11 +260,18 @@ class _File extends StatelessWidget {
               ),
             ],
           ),
-          for (final String note in <String>{for (final Syllabus c in courses) ...c.notes})
+          for (final String note in <String>{
+            for (final Syllabus c in courses) ...c.notes,
+          })
             Padding(
               padding: const EdgeInsets.fromLTRB(22, 0, 4, 2),
-              child: Text(note,
-                  style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution, fontSize: 11)),
+              child: Text(
+                note,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: context.colors.warning,
+                  fontSize: 12,
+                ),
+              ),
             ),
           for (final Syllabus course in courses)
             InkWell(
@@ -258,17 +291,21 @@ class _File extends StatelessWidget {
                       ),
                     ),
                     if (inUse == course.name)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: AppTheme.successFill,
-                          borderRadius: BorderRadius.circular(3),
+                      // Shrinks before the rail overflows.
+                      const Flexible(
+                        child: StatusPill(
+                          label: 'used for this paper',
+                          tone: ToneKind.success,
+                          dense: true,
+                          outlined: false,
                         ),
-                        child: Text('used for this paper',
-                            style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.success, fontSize: 11)),
                       ),
                     const SizedBox(width: 4),
-                    const Icon(Icons.visibility_outlined, size: 14, color: AppTheme.textSecondary),
+                    Icon(
+                      Icons.visibility_outlined,
+                      size: 14,
+                      color: context.colors.textMuted,
+                    ),
                   ],
                 ),
               ),

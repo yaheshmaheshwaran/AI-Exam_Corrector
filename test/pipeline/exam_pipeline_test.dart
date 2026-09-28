@@ -25,6 +25,7 @@ import 'package:exam_corrector/pipeline/engines.dart';
 import 'package:exam_corrector/pipeline/exam_pipeline.dart';
 import 'package:exam_corrector/pipeline/layout/text_layer_region_detector.dart';
 import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/pipeline/marking/teacher_key.dart';
 import 'package:exam_corrector/services/review/teacher_work_store.dart';
 import 'package:exam_corrector/pipeline/recognition/ensemble_handwriting_recognizer.dart';
 import 'package:exam_corrector/pipeline/visual/visual_evidence_engine.dart';
@@ -410,6 +411,58 @@ void main() {
       expect(assessment.result, isNotNull);
       expect(assessment.warnings.join(), contains('The answer key could not be prepared'));
       expect(marker.tasks.every((MarkingTask t) => t.answerKey.isEmpty), isTrue);
+    });
+  });
+
+  group("the teacher's own answer key", () {
+    const TeacherKeySource keyFile = TeacherKeySource(
+      fileName: 'key.txt',
+      hash: 'teacher-key-1',
+      text: '1. The mitochondrion (2 marks)\n2. Because the cells respire.',
+    );
+
+    test('covers the questions it answers; the rest are marked as before', () async {
+      final _Keys keys = _Keys();
+      final ExamPipeline pipeline = build(keys: keys);
+      final QuestionPaper paper = await pipeline.readQuestionPaper(questions);
+      final TeacherKey key = await pipeline.alignTeacherKey(paper, questions.contentHash, keyFile);
+      expect(key.entries.keys, <String>['Q1', 'Q2']);
+      expect(key.coverage(paper), (covered: 2, total: 3, printed: 0));
+      await TeacherWorkStore(store).saveTeacherKey(questions.contentHash, key.toJson());
+
+      await pipeline.run(answerSheet: answers, questionPaper: questions);
+
+      // The AI prepares a key only for the question the teacher's does not answer.
+      expect(keys.asked, <String>['Q3']);
+      final MarkingTask q1 = marker.tasks.firstWhere((MarkingTask t) => t.question.questionId == 'Q1');
+      expect(q1.answerKeySource, AnswerKeySource.teacher);
+      expect(q1.answerKey, contains('The mitochondrion'));
+      final MarkingTask q3 = marker.tasks.firstWhere((MarkingTask t) => t.question.questionId == 'Q3');
+      expect(q3.answerKeySource, AnswerKeySource.ai);
+      expect(q3.answerKey, startsWith('- Key point for Q3'));
+    });
+
+    test('a key saved before the paper was read is matched when marking starts', () async {
+      await TeacherWorkStore(store).saveTeacherKey(questions.contentHash, keyFile.unmatched.toJson());
+      await build(keys: _Keys()).run(answerSheet: answers, questionPaper: questions);
+
+      final MarkingTask q2 = marker.tasks.firstWhere((MarkingTask t) => t.question.questionId == 'Q2');
+      expect(q2.answerKeySource, AnswerKeySource.teacher);
+      final TeacherKey? saved = TeacherKey.fromJson(await TeacherWorkStore(store).teacherKey(questions.contentHash));
+      expect(saved!.matched, isTrue);
+    });
+
+    test("the teacher's correction of a line wins over their key", () async {
+      final ExamPipeline pipeline = build(keys: _Keys());
+      final QuestionPaper paper = await pipeline.readQuestionPaper(questions);
+      final TeacherKey key = await pipeline.alignTeacherKey(paper, questions.contentHash, keyFile);
+      await TeacherWorkStore(store).saveTeacherKey(questions.contentHash, key.toJson());
+      await TeacherWorkStore(store).saveAnswerKeyEdits(questions.contentHash, <String, String>{'Q1': 'Mitochondria [2]'});
+
+      await pipeline.run(answerSheet: answers, questionPaper: questions);
+      final MarkingTask q1 = marker.tasks.firstWhere((MarkingTask t) => t.question.questionId == 'Q1');
+      expect(q1.answerKey, 'Mitochondria [2]');
+      expect(q1.answerKeySource, AnswerKeySource.teacher);
     });
   });
 

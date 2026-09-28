@@ -21,6 +21,9 @@ import 'package:exam_corrector/pipeline/engines.dart';
 import 'package:exam_corrector/pipeline/marking/choice_resolver.dart';
 import 'package:exam_corrector/pipeline/marking/marking_rules.dart';
 import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/pipeline/marking/keyed_mcq_marker.dart';
+import 'package:exam_corrector/pipeline/marking/teacher_key.dart';
+import 'package:exam_corrector/pipeline/marking/teacher_key_reader.dart';
 import 'package:exam_corrector/domain/moderation.dart';
 import 'package:exam_corrector/services/review/teacher_work_store.dart';
 import 'package:exam_corrector/pipeline/syllabus/syllabus_index.dart';
@@ -63,6 +66,7 @@ class ExamPipeline {
     required QuestionAligner aligner,
     required MarkingEngine marker,
     AnswerKeyEngine? answerKeys,
+    TeacherKeyReader teacherKeys = const CompositeTeacherKeyReader(),
     PdfService pdf = const PdfService(),
   })  : _config = config,
         _store = store,
@@ -80,6 +84,7 @@ class ExamPipeline {
         _aligner = aligner,
         _marker = marker,
         _answerKeys = answerKeys,
+        _teacherKeys = teacherKeys,
         _pdf = pdf;
 
   final AppConfig Function() _config;
@@ -100,6 +105,9 @@ class ExamPipeline {
 
   /// Prepares the answer key before marking; null marks without one.
   final AnswerKeyEngine? _answerKeys;
+
+  /// Matches the teacher's own answer key to the paper's questions.
+  final TeacherKeyReader _teacherKeys;
   final PdfService _pdf;
   final EquationPromoter _equations = const EquationPromoter();
 
@@ -107,6 +115,39 @@ class ExamPipeline {
 
   /// Images attached per question for the marker, at most.
   static const int imagesPerQuestion = 6;
+
+  /// Reads the question paper alone — the same stage, and the same cache, as
+  /// a correction — so the teacher's answer key can be matched to its
+  /// questions before any script is marked.
+  Future<QuestionPaper> readQuestionPaper(SelectedDocument paper, {CancellationToken? cancel}) async {
+    final _Reporter job = _Reporter(
+      ProcessingJob(jobId: 'paper-${paper.contentHash}', stage: ProcessingStage.extractingQuestions),
+      null,
+    );
+    return (await _questions(paper, job, cancel)).paper;
+  }
+
+  /// The teacher's answer key matched to [paper]'s questions, cached under
+  /// the paper: the same key against the same questions is matched once.
+  Future<TeacherKey> alignTeacherKey(
+    QuestionPaper paper,
+    String paperHash,
+    TeacherKeySource source, {
+    MarkingStandard standard = const MarkingStandard(),
+    CancellationToken? cancel,
+  }) async {
+    final String key = 'teacher-key-${ArtifactStore.fingerprint(<Object?>[
+          _teacherKeys.fingerprint,
+          source.hash,
+          paper.toJson(),
+          standard.mcqSections,
+        ])}';
+    final TeacherKey? cached = TeacherKey.fromJson(await _store.read(paperHash, key));
+    if (cached != null && cached.sourceHash == source.hash) return cached;
+    final TeacherKey matched = await _teacherKeys.read(source, paper, standard: standard, cancel: cancel);
+    await _store.write(paperHash, key, matched.toJson());
+    return matched;
+  }
 
   /// Runs every stage for one answer sheet against one question paper.
   ///
@@ -949,6 +990,8 @@ class ExamPipeline {
           syllabusCourse: index?.courseHeader ?? '',
           standard: standard,
           answerKey: paper.markSchemeFor(question).trim().isEmpty ? key.textFor(question.questionId) : '',
+          answerKeySource: key.sourceFor(question.questionId) ?? AnswerKeySource.ai,
+          keyOption: paper.markSchemeFor(question).trim().isEmpty ? key.optionFor(question.questionId) : null,
           expectedWords: paper.markSchemeFor(question).trim().isEmpty
               ? key.expectedWordsFor(question.questionId)
               : null,
@@ -966,6 +1009,7 @@ class ExamPipeline {
           task.syllabus,
           task.syllabusCourse,
           task.answerKey,
+          task.answerKeySource.name,
           // Only what changes the AI's judgement: rounding and penalties are
           // applied afterwards, to cached marks as well.
           if (standard.changesJudgement) standard.judgementKey,
@@ -976,7 +1020,14 @@ class ExamPipeline {
 
     final Map<String, QuestionResult> results = <String, QuestionResult>{};
     final List<MarkingTask> pending = <MarkingTask>[];
+    // A multiple-choice answer the teacher's key settles without doubt is
+    // marked here: no request, no wait.
+    final KeyedMcqMarker keyed = KeyedMcqMarker(reviewThreshold: _config().reviewThreshold, standard: standard);
     for (final MarkingTask task in tasks) {
+      if (keyed.mark(task) case final QuestionResult direct) {
+        results[task.question.questionId] = direct;
+        continue;
+      }
       final JsonMap? cached = await _store.read(hash, keyFor(task));
       final QuestionResult? restored =
           cached == null ? null : QuestionResult.fromJson(cached);
@@ -1067,10 +1118,15 @@ class ExamPipeline {
   }) async {
     final TeacherWorkStore work = TeacherWorkStore(_store);
     final Map<String, String> edits = await work.answerKeyEdits(paperHash);
+    final Map<String, TeacherKeyEntry> own = await _teacherKeyFor(paper, paperHash, work, standard, job, cancel);
     final AnswerKeyEngine? engine = _answerKeys;
+    // The AI prepares a key only for questions nothing else covers: not the
+    // printed scheme, and not the teacher's own key.
     final List<AnswerKeyTask> tasks = <AnswerKeyTask>[
       for (final Question question in paper.markable)
-        if (paper.markSchemeFor(question).trim().isEmpty && (question.maximumMarks ?? 0) > 0)
+        if (paper.markSchemeFor(question).trim().isEmpty &&
+            (question.maximumMarks ?? 0) > 0 &&
+            !own.containsKey(question.questionId))
           AnswerKeyTask(
             question: question,
             section: paper.section(question.sectionId),
@@ -1081,7 +1137,7 @@ class ExamPipeline {
             },
           ),
     ];
-    if (engine == null || tasks.isEmpty) return AnswerKey(edits: edits);
+    if (engine == null || tasks.isEmpty) return AnswerKey(teacher: own, edits: edits);
 
     final String cacheKey = 'answer-key-${ArtifactStore.fingerprint(<Object?>[
           engine.fingerprint,
@@ -1110,16 +1166,59 @@ class ExamPipeline {
           'The answer key could not be prepared (${error.message}); questions without a '
               'printed mark scheme were marked without one.',
         ]);
-        return AnswerKey(edits: edits);
+        return AnswerKey(teacher: own, edits: edits);
       }
     }
-    final AnswerKey key = AnswerKey(entries: entries, edits: edits);
+    final AnswerKey key = AnswerKey(entries: entries, teacher: own, edits: edits);
     try {
       await work.saveAnswerKey(paperHash, key.toJson());
     } on IOException {
       // Only the teacher's view of the key; marking has what it needs.
     }
     return key;
+  }
+
+  /// The teacher's own key, for the questions it may cover: those the paper
+  /// prints no scheme for — the printed scheme wins. A key saved before the
+  /// paper could be read is matched now, and saved matched.
+  Future<Map<String, TeacherKeyEntry>> _teacherKeyFor(
+    QuestionPaper paper,
+    String paperHash,
+    TeacherWorkStore work,
+    MarkingStandard standard,
+    _Reporter job,
+    CancellationToken? cancel,
+  ) async {
+    TeacherKey? key;
+    try {
+      key = TeacherKey.fromJson(await work.teacherKey(paperHash));
+    } on IOException {
+      return const <String, TeacherKeyEntry>{};
+    }
+    if (key == null) return const <String, TeacherKeyEntry>{};
+    if (!key.matched) {
+      try {
+        job.progress('Matching your answer key to the questions…', 0);
+        key = await alignTeacherKey(
+          paper,
+          paperHash,
+          TeacherKeySource(fileName: key.fileName, hash: key.sourceHash, text: key.text),
+          standard: standard,
+          cancel: cancel,
+        );
+        await work.saveTeacherKey(paperHash, key.toJson());
+      } on CorrectionException catch (error) {
+        job.warn(<String>['Your answer key could not be matched to the questions (${error.message}); '
+            'the paper was marked without it.']);
+        return const <String, TeacherKeyEntry>{};
+      }
+    }
+    return <String, TeacherKeyEntry>{
+      for (final Question question in paper.markable)
+        if (key.entries[question.questionId] case final TeacherKeyEntry entry
+            when !entry.isEmpty && paper.markSchemeFor(question).trim().isEmpty)
+          question.questionId: entry,
+    };
   }
 
   /// Where an answer begins on the answer sheet, as a sortable number.

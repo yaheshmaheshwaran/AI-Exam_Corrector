@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
+import 'package:exam_corrector/app/app_colors.dart';
 import 'package:exam_corrector/domain/moderation.dart';
 
 /// Where moderation stands for the paper: waiting for the teacher's marks,
@@ -68,7 +68,7 @@ class ModerationChip extends StatelessWidget {
         message: 'Unmarked questions are scaled ${applied.factors}, ${applied.basis}.$_gap\n\n$_how',
         child: InputChip(
           key: const Key('moderation-active'),
-          avatar: const Icon(Icons.balance, size: 16, color: AppTheme.accent),
+          avatar: Icon(Icons.balance, size: 16, color: context.colors.primary),
           label: Text('Moderated ${applied.factors}'),
           onDeleted: onRemove,
           deleteButtonTooltipMessage: 'Remove moderation',
@@ -81,13 +81,13 @@ class ModerationChip extends StatelessWidget {
         key: const Key('moderation-waiting'),
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          const Icon(Icons.balance, size: 15, color: AppTheme.textSecondary),
+          Icon(Icons.balance, size: 15, color: context.colors.textMuted),
           const SizedBox(width: 4),
           Text(
             samples == 0
                 ? 'Moderation: mark a few questions yourself'
                 : 'Moderation: $samples of ${Moderation.minimumQuestions} questions marked',
-            style: small?.copyWith(color: AppTheme.textSecondary),
+            style: small?.copyWith(color: context.colors.textMuted),
           ),
         ],
       ),

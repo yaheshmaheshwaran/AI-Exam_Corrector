@@ -6,9 +6,11 @@ import 'package:exam_corrector/models/correction_request.dart';
 import 'package:exam_corrector/models/published_result.dart';
 import 'package:exam_corrector/screens/requests/requests_screen.dart';
 import 'package:exam_corrector/services/results/results_repository.dart';
+import 'package:exam_corrector/services/results/session_results.dart';
 import 'package:exam_corrector/state/app_session.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
+import 'account_fakes.dart';
 import 'fakes.dart';
 
 void main() {
@@ -76,7 +78,7 @@ void main() {
     expect(controller.finalTotal, (await db.result(published.id))!.total);
   });
 
-  testWidgets('roles: a student signs in with roll number and subject, sees only theirs, and asks for a correction',
+  testWidgets('roles: a student signs in, sees only their own results, and asks for a correction',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 900);
     tester.view.devicePixelRatio = 1;
@@ -87,30 +89,57 @@ void main() {
       controller = await marked();
       await controller.acceptMark('Q2');
       await controller.publishCurrent(rollNo: '21CS045', student: 'Priya', subjectCode: 'CCS356', exam: 'CAT 1');
+      // Someone else's result, in the same subject: never shown to Priya.
+      await controller.publishCurrent(rollNo: '21CS046', student: 'Arun', subjectCode: 'CCS356', exam: 'CAT 1');
     });
-    final AppSession session = AppSession();
-    await tester.pumpWidget(ExamCorrectorApp(controller: controller, session: session, results: db));
+    final MemoryAccountRepository accounts = MemoryAccountRepository.withCollege(resultsFor: (_) => db);
+    final SessionResults results = SessionResults();
+    final AppSession session = AppSession(accounts: accounts, results: results, localResults: db);
+    await tester.runAsync(session.restore);
+    await tester.pumpWidget(ExamCorrectorApp(controller: controller, session: session, results: results));
     await tester.pump();
-    expect(find.text('Who is using the app?'), findsOneWidget);
+    expect(find.byKey(const Key('sign-in-screen')), findsOneWidget);
 
-    // Student.
-    await tester.tap(find.byKey(const ValueKey<String>('role-student')));
-    await tester.pumpAndSettle();
-    expect(find.text('Settings'), findsNothing);
-
-    Future<void> search(String roll, String subject) async {
-      await tester.enterText(find.byKey(const Key('student-roll')), roll);
-      await tester.enterText(find.byKey(const Key('student-subject')), subject);
-      await tester.tap(find.byKey(const Key('student-search')));
+    Future<void> signIn(String login) async {
+      await tester.enterText(find.byKey(const Key('sign-in-login')), login);
+      await tester.enterText(find.byKey(const Key('sign-in-password')), 'password1');
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('sign-in-submit')));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
       await tester.pumpAndSettle();
     }
 
-    await search('21CS046', 'CCS356');
-    expect(find.byKey(const Key('student-none')), findsOneWidget);
-    await search('21cs045', 'CS3401');
-    expect(find.byKey(const Key('student-none')), findsOneWidget);
+    // A wrong password is refused, in words.
+    await tester.enterText(find.byKey(const Key('sign-in-login')), 'priya');
+    await tester.enterText(find.byKey(const Key('sign-in-password')), 'nope-nope');
+    await tester.runAsync(() async {
+      await tester.tap(find.byKey(const Key('sign-in-submit')));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('Wrong email, username or password.'), findsOneWidget);
 
-    await search('21cs045', 'ccs356');
+    // Student, by username: straight to their own results.
+    await signIn('priya');
+    expect(find.text('Settings'), findsNothing);
+    expect(find.textContaining('Priya S · 21CS045 · PSG Tech'), findsOneWidget);
+    expect(find.text('CCS356 · CAT 1'), findsOneWidget, reason: 'only 21CS045’s result');
+
+    Future<void> filter(String subject) async {
+      await tester.enterText(find.byKey(const Key('student-subject')), subject);
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('student-search')));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+    }
+
+    await filter('CS3401');
+    expect(find.byKey(const Key('student-none')), findsOneWidget);
+    await filter('ccs356');
     expect(find.text('CCS356 · CAT 1'), findsOneWidget);
     await tester.tap(find.text('CCS356 · CAT 1'));
     await tester.pumpAndSettle();
@@ -144,13 +173,19 @@ void main() {
     );
     expect(find.byKey(const ValueKey<String>('request-Q1')), findsNothing);
 
-    // Teacher: the badge counts it.
-    await tester.tap(find.byKey(const Key('switch-role')));
+    // Teacher, by email: the badge counts it.
+    await tester.runAsync(() async {
+      await tester.tap(find.byKey(const Key('switch-role')));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('role-teacher')));
+    expect(find.byKey(const Key('sign-in-screen')), findsOneWidget);
+    await signIn('teach@college.edu');
+    await tester.runAsync(controller.refreshRequests);
     await tester.pumpAndSettle();
     expect(controller.openRequestCount, 1);
     expect(find.byKey(const Key('open-requests')), findsOneWidget);
+    expect(find.byKey(const Key('account-menu')), findsOneWidget);
   });
 
   testWidgets('the teacher accepts a request in the Requests screen; the student sees the new mark',

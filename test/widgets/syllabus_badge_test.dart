@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
+import 'package:exam_corrector/app/app_colors.dart';
 import 'package:exam_corrector/domain/evidence.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
@@ -80,13 +80,13 @@ void main() {
     );
     expect(find.byKey(const ValueKey<String>('syllabus-badge-exact')), findsOneWidget);
 
-    // The bonus, and the marks it went into, are gold; other marks are not.
+    // The bonus, and the marks it went into, are in the bonus colour; other marks are not.
     MarksBadge marks(String id) => tester.widget<MarksBadge>(
         find.descendant(of: find.byKey(ValueKey<String>('question-row-$id')), matching: find.byType(MarksBadge)));
-    expect(marks('Q1').gold, isTrue);
-    expect(marks('Q2').gold, isFalse);
+    expect(marks('Q1').bonus, isTrue);
+    expect(marks('Q2').bonus, isFalse);
     final Text label = tester.widget<Text>(find.text('Syllabus match +1'));
-    expect(label.style?.color, AppTheme.gold);
+    expect(label.style?.color, AppColors.light.bonus);
   });
 
   test('the badge is published with the result, and exported', () {
@@ -107,7 +107,7 @@ void main() {
     expect(csv, contains('Syllabus match (90%) +1'));
     expect(
       exporter.export(assessment(), const TeacherReviewBook(), ReportFormat.html),
-      contains('<span class="tag gold">★ Syllabus match +1</span>'),
+      contains('<span class="tag bonus">★ Syllabus match +1</span>'),
     );
   });
 

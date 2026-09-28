@@ -33,6 +33,7 @@ dependencies:
   xml: ^7.0.1
   desktop_drop: ^0.8.4
   sqlite3: ^3.5.2
+  supabase: ^2.16.1
 
 dev_dependencies:
   flutter_test:
@@ -41,3 +42,22 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # The app's seven short sounds, synthesised for it (160 KB together). The
+  # opening chime is made by tool/make_welcome_sound.dart.
+  assets:
+    - assets/sounds/
+
+  # Plus Jakarta Sans (SIL Open Font License, assets/fonts/OFL.txt). Bundled,
+  # so the first frame never waits on a download.
+  fonts:
+    - family: PlusJakartaSans
+      fonts:
+        - asset: assets/fonts/PlusJakartaSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/PlusJakartaSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/PlusJakartaSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/PlusJakartaSans-Bold.ttf
+          weight: 700

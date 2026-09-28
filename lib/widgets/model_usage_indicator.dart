@@ -2,6 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/widgets/ui/app_dialog.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/config/app_config.dart';
 import 'package:exam_corrector/services/ai/model_usage.dart';
@@ -151,10 +155,10 @@ class _ModelUsageIndicatorState extends State<ModelUsageIndicator> {
     final ModelStatus status = ModelStatus.of(widget.config, widget.usage);
     final (Color colour, Color fill, Color edge) = switch (status.state) {
       ModelState.noKey || ModelState.degraded || ModelState.waiting =>
-        (AppTheme.caution, AppTheme.cautionFill, const Color(0xFFE8CE6A)),
-      ModelState.exhausted => (AppTheme.danger, const Color(0xFFFDE7E9), const Color(0xFFF1B7BD)),
-      ModelState.working => (AppTheme.accent, const Color(0xFFEAF3FC), const Color(0xFFBBD7F2)),
-      ModelState.idle => (AppTheme.textSecondary, AppTheme.pageBackground, AppTheme.stroke),
+        (context.colors.warning, context.colors.warningFill, context.colors.warningBorder),
+      ModelState.exhausted => (context.colors.danger, context.colors.dangerFill, context.colors.dangerBorder),
+      ModelState.working => (context.colors.primary, context.colors.primarySoft, context.colors.primaryBorder),
+      ModelState.idle => (context.colors.textMuted, context.colors.surfaceMuted, context.colors.border),
     };
     final IconData icon = switch (status.state) {
       ModelState.noKey => Icons.key_off_outlined,
@@ -213,7 +217,7 @@ class ModelUsageDialog extends StatelessWidget {
   final ModelUsageMonitor usage;
 
   static Future<void> show(BuildContext context, AppConfig config, ModelUsageMonitor usage) =>
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => ModelUsageDialog(config: config, usage: usage),
       );
@@ -232,7 +236,7 @@ class ModelUsageDialog extends StatelessWidget {
             if (!config.modelChain.contains(m)) m,
         ];
         final TextStyle? head = theme.textTheme.bodySmall
-            ?.copyWith(color: AppTheme.textSecondary, fontWeight: FontWeight.w600);
+            ?.copyWith(color: context.colors.textMuted, fontWeight: FontWeight.w600);
         final TextStyle? cell = theme.textTheme.bodySmall;
 
         return AlertDialog(
@@ -249,7 +253,7 @@ class ModelUsageDialog extends StatelessWidget {
                   '${ModelStatus.clock(ModelUsageMonitor.nextQuotaReset(usage.now))} your time. '
                   'Free-tier keys allow a limited number of requests per minute and per '
                   'day for each model; when one runs out, the next model in Settings is used.',
-                  style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                  style: context.text.caption,
                 ),
                 const SizedBox(height: 14),
                 Text('Today, by model', style: theme.textTheme.titleSmall),
@@ -288,7 +292,7 @@ class ModelUsageDialog extends StatelessWidget {
                             null => usage.active?.model == model ? 'In use now' : 'Available',
                           },
                           style: cell?.copyWith(
-                            color: usage.isExhausted(model) ? AppTheme.danger : null,
+                            color: usage.isExhausted(model) ? context.colors.danger : null,
                           ),
                         ),
                       ]),
@@ -299,7 +303,7 @@ class ModelUsageDialog extends StatelessWidget {
                 const SizedBox(height: 4),
                 if (usage.recent.isEmpty)
                   Text('None since the app started.',
-                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+                      style: context.text.caption),
                 for (final ModelCall call in usage.recent) _CallRow(call: call, now: usage.now),
               ],
             ),
@@ -323,10 +327,10 @@ class _CallRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final (IconData icon, Color colour, String result) = switch (call.status) {
-      ModelCallStatus.running => (Icons.more_horiz, AppTheme.accent, 'working'),
-      ModelCallStatus.waiting => (Icons.hourglass_top, AppTheme.caution, 'waiting out a rate limit'),
-      ModelCallStatus.succeeded => (Icons.check_circle_outline, AppTheme.success, 'done'),
-      ModelCallStatus.failed => (Icons.error_outline, AppTheme.danger, 'failed'),
+      ModelCallStatus.running => (Icons.more_horiz, context.colors.primary, 'working'),
+      ModelCallStatus.waiting => (Icons.hourglass_top, context.colors.warning, 'waiting out a rate limit'),
+      ModelCallStatus.succeeded => (Icons.check_circle_outline, context.colors.success, 'done'),
+      ModelCallStatus.failed => (Icons.error_outline, context.colors.danger, 'failed'),
     };
     final int seconds = call.elapsed(now).inSeconds;
     return Padding(
@@ -348,7 +352,7 @@ class _CallRow extends StatelessWidget {
                 ),
                 if (call.message.isNotEmpty)
                   Text(call.message,
-                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+                      style: context.text.caption),
               ],
             ),
           ),

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
+import 'package:exam_corrector/services/ui_sound.dart';
+
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/domain/evidence.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
@@ -78,9 +82,9 @@ class _PageInspectorScreenState extends State<PageInspectorScreen> {
         children: <Widget>[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: const BoxDecoration(
-              color: AppTheme.cardBackground,
-              border: Border(bottom: BorderSide(color: AppTheme.stroke)),
+            decoration: BoxDecoration(
+              color: context.colors.surface,
+              border: Border(bottom: BorderSide(color: context.colors.border)),
             ),
             child: Row(
               children: <Widget>[
@@ -106,7 +110,7 @@ class _PageInspectorScreenState extends State<PageInspectorScreen> {
                                 avatar: Container(width: 8, height: 8, color: regionColor(type)),
                                 label: Text(
                                   '${type.displayName} (${_assessment.answerSheet.countOf(type)})',
-                                  style: const TextStyle(fontSize: 11.5),
+                                  style: const TextStyle(fontSize: 12),
                                 ),
                                 onSelected: (bool on) => setState(() {
                                   on ? _hidden.remove(type) : _hidden.add(type);
@@ -122,7 +126,7 @@ class _PageInspectorScreenState extends State<PageInspectorScreen> {
                   children: <Widget>[
                     Switch(
                       value: _showSegments,
-                      onChanged: (bool v) => setState(() => _showSegments = v),
+                      onChanged: toggled((bool v) => setState(() => _showSegments = v)),
                     ),
                     const Text('Answer boundaries', style: TextStyle(fontSize: 12)),
                   ],
@@ -148,7 +152,7 @@ class _PageInspectorScreenState extends State<PageInspectorScreen> {
                           p.isBlank
                               ? 'blank — skipped'
                               : '${p.regions.length} regions · ${p.detector.split(':').first}',
-                          style: const TextStyle(fontSize: 11),
+                          style: const TextStyle(fontSize: 12),
                         ),
                         onTap: () => setState(() {
                           _pageIndex = index;
@@ -224,13 +228,13 @@ class _PageSummary extends StatelessWidget {
           Text('${entry.key.displayName}: ${entry.value}', style: theme.textTheme.bodySmall),
         const SizedBox(height: 10),
         Text('Tap a region to inspect it.',
-            style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+            style: context.text.caption),
         if (assessment.alignment.unassignedRegionIds.isNotEmpty) ...<Widget>[
           const SizedBox(height: 10),
           Text(
             '${assessment.alignment.unassignedRegionIds.length} region(s) across the '
             'paper were not assigned to any question.',
-            style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution),
+            style: theme.textTheme.bodySmall?.copyWith(color: context.colors.warning),
           ),
         ],
       ],
@@ -309,15 +313,15 @@ class _RegionDetails extends StatelessWidget {
                     Text(
                       '  ${line.confidence.toStringAsFixed(2)}  ${line.text}',
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: AppTheme.textSecondary,
+                        color: context.colors.textMuted,
                         fontFamily: 'Consolas',
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     ),
                   if (handwriting.readings[i].uncertainSpans.isNotEmpty)
                     Text(
                       'Uncertain: ${handwriting.readings[i].uncertainSpans.map((UncertainSpan s) => '${s.text} (${s.confidence.toStringAsFixed(2)})').join(', ')}',
-                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution),
+                      style: theme.textTheme.bodySmall?.copyWith(color: context.colors.warning),
                     ),
                 ],
               ),
@@ -358,7 +362,7 @@ class _Field extends StatelessWidget {
         children: <Widget>[
           SizedBox(
             width: 104,
-            child: Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+            child: Text(label, style: TextStyle(fontSize: 12, color: context.colors.textMuted)),
           ),
           Expanded(child: SelectableText(value, style: const TextStyle(fontSize: 12))),
         ],

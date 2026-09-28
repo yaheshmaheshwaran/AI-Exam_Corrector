@@ -1,6 +1,6 @@
 # Architecture
 
-Exam Corrector marks a student's answer sheet against the question paper it was
+Marklume marks a student's answer sheet against the question paper it was
 sat from. This document describes how it understands a handwritten script —
 pages, regions, evidence, answers — before any mark is given, and how each mark
 stays traceable to the ink it was awarded for.
@@ -504,7 +504,36 @@ The sidecar never outlives the app: closing the window raises an exit request
 can watch it (not Windows), and — for a kill that skips both — the app passes
 `--parent-pid` and the sidecar's watchdog exits once that process is gone.
 
-## 12. Extension points
+## 12. Accounts and the college server
+
+Who is using the app is decided in `AppSession` (`lib/state/app_session.dart`)
+and nowhere else. It moves through `SessionStage`: starting (looking for an
+account kept from last time), signed out, awaiting approval (a teacher the
+college admin has not approved), closed (turned down or removed), signed in,
+and offline (a teacher marking without an account). `ExamCorrectorApp` shows
+the screen for the stage.
+
+Accounts sit behind `AccountRepository`; `SupabaseAccountRepository` talks to
+the college's Supabase project with the public key, and `MemoryAccountRepository`
+(tests) keeps the same rules in memory. Everything anyone may see or change is
+enforced on the server by `supabase/setup.sql`: row level security on every
+table, and functions that check the caller for anything a student may change
+(seen, verified, a correction request) or a member's status. A profile's role,
+college and status are written by a sign-up trigger from what was filled in and
+never trusted from the app afterwards.
+
+Results keep their one interface, `ResultsRepository`. The controller and
+screens hold a `SessionResults`, which passes each call to whoever is signed
+in: `SupabaseResultsRepository` (the college's results; a student's queries
+return only their roll number's) or, for a teacher without an account, the
+SQLite database on this computer. A result is stored as its JSON beside the
+columns it is found by; its answer-sheet pages are files in a private bucket,
+fetched into a local cache before they are shown, so a page is always a file
+and the screens did not change. Marks are still worked out only in Dart:
+accepting a correction computes the new totals with `PublishedResult.withMark`
+and the server stores them with the answer in one transaction.
+
+## 13. Extension points
 
 - **Another model provider**: implement `ModelClient`.
 - **A local vision model** (e.g. a layout model or handwriting VLM served

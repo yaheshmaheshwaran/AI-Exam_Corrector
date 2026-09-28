@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/widgets/ui/app_dialog.dart';
+
 /// Asks for a line or two of text — a reason, a reply — and returns it, or
 /// null when cancelled.
 ///
@@ -40,7 +42,7 @@ class TextPromptDialog extends StatefulWidget {
     Key? confirmKey,
     Widget? preview,
   }) =>
-      showDialog<String>(
+      showAppDialog<String>(
         context: context,
         builder: (BuildContext context) => TextPromptDialog(
           title: title,

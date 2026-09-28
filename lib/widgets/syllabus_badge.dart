@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/app/app_colors.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
 
-/// Everything the syllabus bonus touches is gold.
-Color syllabusBadgeColour(SyllabusBadge badge) => AppTheme.gold;
 
 /// A small badge for an answer that covers what the syllabus teaches for its
 /// question: "Syllabus match +1". Nothing for [SyllabusBadge.none].
@@ -26,12 +25,12 @@ class SyllabusBadgeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (badge == SyllabusBadge.none) return const SizedBox.shrink();
-    final Color colour = syllabusBadgeColour(badge);
+    final Color colour = context.colors.bonus;
     final Widget chip = Container(
       key: ValueKey<String>('syllabus-badge-${badge.name}'),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: AppTheme.goldFill,
+        color: context.colors.bonusFill,
         border: Border.all(color: colour.withValues(alpha: 0.45)),
         borderRadius: BorderRadius.circular(AppTheme.controlRadius),
       ),
@@ -43,7 +42,7 @@ class SyllabusBadgeChip extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             '${badge.label}${bonus > 0 ? ' +${formatMarks(bonus)}' : ''}',
-            style: TextStyle(fontSize: 11.5, color: colour, fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 12, color: colour, fontWeight: FontWeight.w600),
           ),
         ],
       ),

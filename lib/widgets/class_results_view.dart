@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/models/section_totals.dart';
 import 'package:exam_corrector/domain/moderation.dart';
 import 'package:exam_corrector/state/marked_script.dart';
+import 'package:exam_corrector/widgets/ui/ui.dart';
 
 /// The class at a glance: every student, their mark, and what is left to do.
 ///
@@ -69,22 +69,18 @@ class _ClassResultsViewState extends State<ClassResultsView> {
           spacing: 24,
           runSpacing: 6,
           children: <Widget>[
-            _Figure('Scripts', '${widget.scripts.length}'),
-            _Figure('Marked', '${marked.length}'),
-            _Figure('To review', '$toReview'),
+            StatTile(label: 'Scripts', value: '${widget.scripts.length}'),
+            StatTile(label: 'Marked', value: '${marked.length}'),
+            StatTile(label: 'To review', value: '$toReview'),
             if (widget.agreement case final ({double before, double after, int questions}) a)
               Tooltip(
                 message: 'On the ${a.questions} question${a.questions == 1 ? '' : 's'} you marked yourself. '
                     'Before moderation the AI was ${Moderation.gap(a.before)}.',
-                child: _Figure(
-                  'AI vs you',
-                  a.after.abs() < 0.05 ? 'level' : '${a.after > 0 ? '+' : '−'}${a.after.abs().toStringAsFixed(1)} a question',
+                child: StatTile(label: 'AI vs you', value: a.after.abs() < 0.05 ? 'level' : '${a.after > 0 ? '+' : '−'}${a.after.abs().toStringAsFixed(1)} a question',
                 ),
               ),
             if (percentages.isNotEmpty)
-              _Figure(
-                'Class average',
-                formatPercentage(
+              StatTile(label: 'Class average', value: formatPercentage(
                   percentages.reduce((double a, double b) => a + b) / percentages.length,
                 ),
               ),
@@ -96,14 +92,14 @@ class _ClassResultsViewState extends State<ClassResultsView> {
             key: const Key('class-marks-high'),
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: AppTheme.cautionFill,
-              border: Border.all(color: AppTheme.caution.withValues(alpha: 0.35)),
+              color: context.colors.warningFill,
+              border: Border.all(color: context.colors.warning.withValues(alpha: 0.35)),
               borderRadius: BorderRadius.circular(AppTheme.controlRadius),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                const Icon(Icons.trending_up, size: 18, color: AppTheme.caution),
+                Icon(Icons.trending_up, size: 18, color: context.colors.warning),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -111,7 +107,7 @@ class _ClassResultsViewState extends State<ClassResultsView> {
                     '${Moderation.classHighAverage.round()}%. Open 2–3 scripts and mark or '
                     'accept their questions yourself, then use "Moderate to your marking" to bring '
                     'every script to your standard. Check the Answer key too.',
-                    style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution),
+                    style: theme.textTheme.bodySmall?.copyWith(color: context.colors.warning),
                   ),
                 ),
               ],
@@ -164,7 +160,7 @@ class _ClassResultsViewState extends State<ClassResultsView> {
             child: Text(
               'Stopped scripts keep everything read from them; marking all again '
               'continues from where each stopped.',
-              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+              style: context.text.caption,
             ),
           ),
       ],
@@ -184,7 +180,7 @@ class _Header extends StatelessWidget {
     final TextStyle? style = Theme.of(context)
         .textTheme
         .bodySmall
-        ?.copyWith(color: AppTheme.textSecondary, fontWeight: FontWeight.w600);
+        ?.copyWith(color: context.colors.textMuted, fontWeight: FontWeight.w600);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 22, 4),
       child: Row(
@@ -234,11 +230,11 @@ class _Row extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final ScriptStatus status = script.status;
     final Color colour = switch (status) {
-      ScriptStatus.marked => AppTheme.success,
-      ScriptStatus.reviewRequired => AppTheme.caution,
-      ScriptStatus.failed => AppTheme.danger,
-      ScriptStatus.processing => AppTheme.accent,
-      ScriptStatus.waiting => AppTheme.textSecondary,
+      ScriptStatus.marked => context.colors.success,
+      ScriptStatus.reviewRequired => context.colors.warning,
+      ScriptStatus.failed => context.colors.danger,
+      ScriptStatus.processing => context.colors.primary,
+      ScriptStatus.waiting => context.colors.textMuted,
     };
     final double? total = script.finalTotal;
     final List<SectionTotal> totals = script.sectionTotals;
@@ -246,9 +242,9 @@ class _Row extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Material(
-        color: AppTheme.cardBackground,
+        color: context.colors.surface,
         shape: RoundedRectangleBorder(
-          side: const BorderSide(color: AppTheme.stroke),
+          side: BorderSide(color: context.colors.border),
           borderRadius: BorderRadius.circular(AppTheme.controlRadius),
         ),
         child: InkWell(
@@ -271,7 +267,7 @@ class _Row extends StatelessWidget {
                         Text(
                           totals.map((SectionTotal t) => '${t.shortName} ${formatMarks(t.awarded)}').join('  ·  '),
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                          style: context.text.caption,
                         ),
                     ],
                   ),
@@ -318,7 +314,7 @@ class _Row extends StatelessWidget {
                   child: Text(
                     script.finalPercentage == null ? '' : formatPercentage(script.finalPercentage!),
                     textAlign: TextAlign.right,
-                    style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.accent),
+                    style: theme.textTheme.bodySmall?.copyWith(color: context.colors.primary),
                   ),
                 ),
                 if (onRemove != null)
@@ -337,21 +333,3 @@ class _Row extends StatelessWidget {
   }
 }
 
-class _Figure extends StatelessWidget {
-  const _Figure(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(label, style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
-        Text(value, style: theme.textTheme.titleMedium),
-      ],
-    );
-  }
-}

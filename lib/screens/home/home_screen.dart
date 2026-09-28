@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
-import 'package:exam_corrector/domain/processing_job.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/domain/syllabus.dart';
 import 'package:exam_corrector/models/correction_result.dart';
@@ -13,36 +11,47 @@ import 'package:exam_corrector/screens/inspector/page_inspector_screen.dart';
 import 'package:exam_corrector/screens/requests/requests_screen.dart';
 import 'package:exam_corrector/screens/students/student_status_screen.dart';
 import 'package:exam_corrector/screens/results/question_detail_screen.dart';
+import 'package:exam_corrector/domain/processing_job.dart';
 import 'package:exam_corrector/services/export/report_exporter.dart';
+import 'package:exam_corrector/services/ui_sound.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 import 'package:exam_corrector/widgets/answer_key_dialog.dart';
+import 'package:exam_corrector/widgets/answer_key_section.dart';
 import 'package:exam_corrector/widgets/moderation_chip.dart';
 import 'package:exam_corrector/pipeline/marking/answer_key.dart';
 import 'package:exam_corrector/widgets/class_results_view.dart';
-import 'package:exam_corrector/widgets/correction_progress.dart';
 import 'package:exam_corrector/widgets/guidance_input.dart';
 import 'package:exam_corrector/widgets/marking_standard_dialog.dart';
 import 'package:exam_corrector/widgets/model_usage_indicator.dart';
 import 'package:exam_corrector/widgets/pdf_upload.dart';
 import 'package:exam_corrector/widgets/processing_panel.dart';
 import 'package:exam_corrector/widgets/results_view.dart';
-import 'package:exam_corrector/widgets/section_card.dart';
 import 'package:exam_corrector/widgets/settings_dialog.dart';
 import 'package:exam_corrector/widgets/syllabus_library_dialog.dart';
 import 'package:exam_corrector/widgets/syllabus_section.dart';
+import 'package:exam_corrector/widgets/ui/ui.dart';
 
-/// The main window: command bar, four workflow steps, status bar.
+part 'publish_dialogs.dart';
+part 'result_actions.dart';
+part 'setup_rail.dart';
+part 'top_bar.dart';
+
+/// The main window: a top bar, the setup rail beside the results, and a
+/// status line.
 ///
 /// The screen owns no marking logic. It collects input, calls the controller,
 /// shows processing as it happens, and opens each question's evidence.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.controller, this.onSwitchRole});
+  const HomeScreen({super.key, required this.controller, this.onSwitchRole, this.account});
 
   final CorrectionController controller;
 
-  /// Back to choosing a role; null when there is only the teacher.
+  /// Back to signing in; null when there is only the teacher.
   final VoidCallback? onSwitchRole;
+
+  /// Who is signed in, and their menu; null without an account.
+  final Widget? account;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -52,9 +61,10 @@ class _HomeScreenState extends State<HomeScreen> {
   late final TextEditingController _guidanceField;
   bool _showingError = false;
 
-  /// Below this height the workflow no longer fits, so the page scrolls
-  /// instead of overflowing, and the results get a fixed, usable height.
-  static const double _comfortableHeight = 760;
+  /// The pinned command's height in the narrow layout, measured, so the
+  /// page scrolls clear of it.
+  double _stackedFoot = 96;
+  bool _wasProcessing = false;
 
   @override
   void initState() {
@@ -84,6 +94,16 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    // Marking that finishes on its own gets a soft chime; a cancelled or
+    // failed run does not.
+    final bool processing = widget.controller.isProcessing;
+    final ProcessingStage? stage = widget.controller.job?.stage;
+    if (_wasProcessing && !processing &&
+        (stage == ProcessingStage.completed || stage == ProcessingStage.reviewRequired)) {
+      UiSound.instance.play(UiSoundKind.done);
+    }
+    _wasProcessing = processing;
+
     final String? error = widget.controller.pendingError;
     if (error != null && !_showingError) {
       _showingError = true;
@@ -92,7 +112,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _export() async {
-    final ReportFormat? format = await showDialog<ReportFormat>(
+    final ReportFormat? format = await showAppDialog<ReportFormat>(
       context: context,
       builder: (BuildContext context) => SimpleDialog(
         title: const Text('Export the marks'),
@@ -117,13 +137,14 @@ class _HomeScreenState extends State<HomeScreen> {
         await controller.publishDefaults(script);
     if (!mounted) return;
     final ({String rollNo, String student, String subjectCode, String exam})? chosen =
-        await showDialog<({String rollNo, String student, String subjectCode, String exam})>(
+        await showAppDialog<({String rollNo, String student, String subjectCode, String exam})>(
       context: context,
       builder: (BuildContext context) => _PublishDialog(
         fileName: script.document.fileName,
         rollNo: defaults.rollNo,
         subjectCode: defaults.subjectCode,
         exam: defaults.exam,
+        registered: controller.registeredRolls(),
       ),
     );
     if (chosen == null) return;
@@ -145,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await controller.publishDefaults(scripts[first]);
     if (!mounted) return;
     final ({String subjectCode, String exam, Map<int, String> rollNos})? chosen =
-        await showDialog<({String subjectCode, String exam, Map<int, String> rollNos})>(
+        await showAppDialog<({String subjectCode, String exam, Map<int, String> rollNos})>(
       context: context,
       builder: (BuildContext context) => _PublishClassDialog(
         scripts: scripts,
@@ -163,7 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _editAnswerKey(CorrectionController controller) async {
     final AnswerKey? key = await controller.answerKey();
-    final QuestionPaper? paper = controller.markedPaper;
+    final QuestionPaper? paper = controller.keyPaper;
     if (!mounted || paper == null) return;
     final Map<String, String>? edits = await AnswerKeyDialog.show(context, paper: paper, key: key);
     if (edits != null) await controller.saveAnswerKeyEdits(edits);
@@ -186,13 +207,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showError(String message) async {
     if (!mounted) return;
+    UiSound.instance.play(UiSoundKind.problem);
 
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: <Widget>[
-            Icon(Icons.error_outline, color: AppTheme.danger, size: 20),
+            Icon(Icons.error_outline, color: context.colors.danger, size: 20),
             SizedBox(width: 10),
             Text('Correction could not continue'),
           ],
@@ -222,46 +244,46 @@ class _HomeScreenState extends State<HomeScreen> {
     final CorrectionController controller = widget.controller;
 
     return Scaffold(
-      body: ListenableBuilder(
-        listenable: controller,
-        builder: (BuildContext context, _) {
-          return Column(
-            children: <Widget>[
-              _CommandBar(
-                model: controller.config.model,
-                hasApiKey: controller.config.hasApiKey,
-                onSettings: () => SettingsDialog.show(context, controller),
-                onSyllabi: controller.hasSyllabusLibrary
-                    ? () => SyllabusLibraryDialog.show(context, controller)
-                    : null,
-                usage: controller.usage == null
-                    ? null
-                    : ModelUsageIndicator(config: controller.config, usage: controller.usage!),
-                onSwitchRole: widget.onSwitchRole,
-                openRequests: controller.canPublish ? controller.openRequestCount : null,
-                onRequests: controller.canPublish ? () => RequestsScreen.open(context, controller) : null,
-                onStudents: controller.canPublish ? () => StudentStatusScreen.open(context, controller) : null,
+      body: Column(
+        children: <Widget>[
+          Expanded(
+            child: ListenableBuilder(
+              listenable: controller,
+              // The workspace fills the window; the top bar floats over it,
+              // frosted, and what scrolls beneath shows softly through.
+              builder: (BuildContext context, _) => Stack(
+                children: <Widget>[
+                  Positioned.fill(child: _workflow(controller)),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Frosted(
+                      bottom: true,
+                      child: _TopBar(
+                    model: controller.config.model,
+                    hasApiKey: controller.config.hasApiKey,
+                    onSettings: () => SettingsDialog.show(context, controller),
+                    onSyllabi: controller.hasSyllabusLibrary
+                        ? () => SyllabusLibraryDialog.show(context, controller)
+                        : null,
+                    usage: controller.usage == null
+                        ? null
+                        : ModelUsageIndicator(config: controller.config, usage: controller.usage!),
+                    onSwitchRole: widget.onSwitchRole,
+                    account: widget.account,
+                    openRequests: controller.canPublish ? controller.openRequestCount : null,
+                    onRequests: controller.canPublish ? () => RequestsScreen.open(context, controller) : null,
+                    onStudents: controller.canPublish ? () => StudentStatusScreen.open(context, controller) : null,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              Expanded(child: _workflow(controller)),
-              CorrectionProgress(
-                statusMessage: controller.statusMessage,
-                isError: controller.statusIsError,
-                isCorrecting: false,
-                isTranscribing: controller.isProcessing,
-                transcriptionProgress: controller.job?.overallFraction ?? 0,
-                correctLabel: controller.isClass
-                    ? 'Mark all ${controller.scripts.length} scripts'
-                    : 'Correct paper',
-                onCorrect: !controller.canCorrect
-                    ? null
-                    : controller.isClass
-                        ? controller.markAll
-                        : controller.startCorrection,
-                onCancel: controller.isProcessing ? controller.cancelProcessing : null,
-              ),
-            ],
-          );
-        },
+            ),
+          ),
+          _StatusFooter(controller: controller),
+        ],
       ),
     );
   }
@@ -271,10 +293,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final List<MarkedScript> scripts = controller.scripts;
     final Widget answerSheet = PdfUpload(
-      title: controller.isClass
-          ? "1. Students' answer sheets"
-          : "1. Student's answer sheet",
-      hint: 'No file selected. Choose the completed script — or select a '
+      title: controller.isClass ? "Students' answer sheets" : "Student's answer sheet",
+      hint: 'Choose the completed script — or select a '
           "whole class's scripts at once (PDF or photo).",
       document: controller.answerSheet,
       summary: controller.isClass
@@ -287,8 +307,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     final Widget questionPaper = PdfUpload(
-      title: '2. Question paper',
-      hint: 'No file selected. Choose the paper with the questions and marks. '
+      title: 'Question paper',
+      hint: 'Choose the paper with the questions and marks. '
           'If it includes the mark scheme or answers, marking follows them.',
       document: controller.questionPaper,
       isLoading: controller.isChoosing && controller.questionPaper == null,
@@ -305,38 +325,171 @@ class _HomeScreenState extends State<HomeScreen> {
       onLoadFile: busy ? null : controller.loadGuidanceFile,
       sourceFile: controller.guidanceFile,
       paperScheme: controller.paperScheme,
-      standard: controller.hasMarkingStandards ? controller.markingStandard : null,
-      onLevel: busy
-          ? null
-          : (MarkingLevel level) =>
-              controller.setMarkingStandard(controller.markingStandard.copyWith(level: level)),
-      onRules: busy ? null : () => _editStandard(controller),
-      onAnswerKey: busy || controller.markedPaper == null ? null : () => _editAnswerKey(controller),
-      moderation: controller.hasMarkingStandards && controller.markedPaper != null
-          ? ModerationChip(
-              applied: controller.moderation,
-              suggested: controller.suggestedModeration,
-              samples: controller.moderationSampleCount,
-              agreement: controller.agreement,
-              onApply: busy ? null : controller.applyModeration,
-              onRemove: busy ? null : controller.removeModeration,
-            )
-          : null,
     );
 
+    final Widget? standard = !controller.hasMarkingStandards
+        ? null
+        : MarkingStandardSection(
+            standard: controller.markingStandard,
+            onLevel: busy
+                ? null
+                : (MarkingLevel level) =>
+                    controller.setMarkingStandard(controller.markingStandard.copyWith(level: level)),
+            onRules: busy ? null : () => _editStandard(controller),
+            moderation: controller.markedPaper != null
+                ? ModerationChip(
+                    applied: controller.moderation,
+                    suggested: controller.suggestedModeration,
+                    samples: controller.moderationSampleCount,
+                    agreement: controller.agreement,
+                    onApply: busy ? null : controller.applyModeration,
+                    onRemove: busy ? null : controller.removeModeration,
+                  )
+                : null,
+          );
+
+    // One line above the command: can marking start, and if not, what is
+    // still needed.
+    final List<String> missing = <String>[
+      if (controller.answerSheet == null && scripts.isEmpty) 'the answer sheet',
+      if (controller.questionPaper == null) 'the question paper',
+    ];
+    final (String, ToneKind) readiness = controller.isProcessing
+        ? ('Correction in progress', ToneKind.primary)
+        : controller.canCorrect
+            ? (controller.isClass ? '${scripts.length} scripts ready to mark' : 'Ready to correct', ToneKind.success)
+            : missing.isNotEmpty
+                ? ('Needs ${missing.join(' and ')}', ToneKind.neutral)
+                : ('', ToneKind.neutral);
+
+    final Widget action = _RailAction(
+      readiness: readiness.$1,
+      readinessTone: readiness.$2,
+      label: controller.isClass ? 'Mark all ${scripts.length} scripts' : 'Correct paper',
+      onCorrect: !controller.canCorrect
+          ? null
+          : controller.isClass
+              ? controller.markAll
+              : controller.startCorrection,
+      onCancel: controller.isProcessing ? controller.cancelProcessing : null,
+    );
+
+    final Widget answerKey = AnswerKeySection(
+      teacherKey: controller.teacherKey,
+      coverage: controller.keyCoverage,
+      reading: controller.isReadingKey,
+      paperChosen: controller.questionPaper != null,
+      onChoose: busy || controller.questionPaper == null || controller.isReadingKey ? null : controller.chooseAnswerKey,
+      onRemove: busy || controller.isReadingKey ? null : controller.removeAnswerKey,
+      onReview: busy || controller.keyPaper == null ? null : () => _editAnswerKey(controller),
+    );
+
+    final List<Widget> sections = <Widget>[
+      answerSheet,
+      questionPaper,
+      answerKey,
+      guidance,
+      ?standard,
+      if (controller.hasSyllabusLibrary) SyllabusSection(controller: controller),
+    ];
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // Below this the rail and the results no longer fit side by side:
+        // the rail goes above, and the page scrolls.
+        final bool stacked = constraints.maxWidth < _sideBySideWidth;
+        final double paneWidth =
+            constraints.maxWidth - 2 * AppTheme.pagePadding - (stacked ? 0 : _SetupRail.width);
+        final Widget results = _results(controller, compact: paneWidth < 760);
+        if (stacked) {
+          // Once there is something to show, it comes first: the inputs are
+          // chosen by then. The command stays in reach at the foot.
+          final bool resultsFirst =
+              controller.isProcessing || controller.assessment != null || controller.showingClass;
+          final Widget pane = Padding(
+            padding: const EdgeInsets.all(AppTheme.pagePadding),
+            child: SizedBox(
+              height: (constraints.maxHeight - 120).clamp(360.0, 640.0),
+              child: results,
+            ),
+          );
+          final Widget rail = _SetupRail(sections: sections, action: const SizedBox.shrink(), scrolls: false);
+          // The page scrolls under the top bar and under the command,
+          // pinned and frosted at the foot.
+          return Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.only(top: _TopBar.height, bottom: _stackedFoot),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: resultsFirst ? <Widget>[pane, rail] : <Widget>[rail, pane],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: MeasureSize(
+                  onSize: (Size size) {
+                    if (mounted && size.height != _stackedFoot) setState(() => _stackedFoot = size.height);
+                  },
+                  child: _RailFoot(action: action),
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            SizedBox(
+              width: _SetupRail.width,
+              child: _SetupRail(sections: sections, action: action, topInset: _TopBar.height),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppTheme.pagePadding,
+                  AppTheme.pagePadding + _TopBar.height,
+                  AppTheme.pagePadding,
+                  AppTheme.pagePadding,
+                ),
+                child: results,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// The results pane: processing as it happens, the class, or one script.
+  Widget _results(CorrectionController controller, {required bool compact}) {
+    final bool busy = controller.isBusy;
+    final List<MarkedScript> scripts = controller.scripts;
     final ExamAssessment? assessment = controller.assessment;
-    final ProcessingJob? job = controller.job;
     final int? position = controller.batchPosition;
-    final Widget body;
+    Widget body;
     final Widget? actions;
-    if (controller.isProcessing && job != null) {
-      body = ProcessingPanel(
-        job: job,
-        onCancel: controller.cancelProcessing,
-        scriptLabel: position == null
-            ? null
-            : 'Script $position of ${scripts.length}: '
-                '${scripts[position - 1].document.fileName}',
+    if (controller.isProcessing && controller.job == null) {
+      // Marking has started but nothing has been counted yet.
+      body = const SkeletonRows(label: 'Starting to mark');
+      actions = null;
+    } else if (controller.isProcessing && controller.job != null) {
+      // Only the panel follows the progress; the rest of the window waits
+      // for the next stage.
+      body = ListenableBuilder(
+        listenable: controller.progress,
+        builder: (BuildContext context, _) => ProcessingPanel(
+          job: controller.job!,
+          scriptLabel: position == null
+              ? null
+              : 'Script $position of ${scripts.length}: '
+                  '${scripts[position - 1].document.fileName}',
+        ),
       );
       actions = null;
     } else if (controller.showingClass) {
@@ -369,6 +522,20 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } else {
       body = ResultsView(
+        emptyDetail: _EmptyChecklist(
+          steps: <({String label, bool done, bool optional})>[
+            (
+              label: controller.isClass ? "Choose the students' answer sheets" : "Choose the student's answer sheet",
+              done: controller.answerSheet != null || scripts.isNotEmpty,
+              optional: false,
+            ),
+            (label: 'Choose the question paper', done: controller.questionPaper != null, optional: false),
+            (label: 'Add your answer key', done: controller.teacherKey != null, optional: true),
+          ],
+          closing: controller.canCorrect
+              ? 'Everything needed is here. Press ${controller.isClass ? 'Mark all' : 'Correct paper'} to start.'
+              : 'Choose what is still needed in the panel on the left.',
+        ),
         assessment: assessment,
         reviews: controller.reviews,
         pendingCorrections: controller.hasPendingCorrections,
@@ -380,6 +547,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ? null
           : _ResultActions(
               assessment: assessment,
+              compact: compact,
               developerMode: controller.config.developerMode,
               onExport: assessment.result == null ? null : _export,
               onInspect: () => PageInspectorScreen.open(context, assessment),
@@ -392,699 +560,54 @@ class _HomeScreenState extends State<HomeScreen> {
             );
       actions = !controller.isClass
           ? resultActions
-          : Flexible(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  TextButton.icon(
-                    onPressed: controller.showClass,
-                    icon: const Icon(Icons.arrow_back, size: 14),
-                    label: const Text('All scripts'),
-                  ),
-                  ?resultActions,
-                ],
-              ),
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                TextButton.icon(
+                  onPressed: controller.showClass,
+                  icon: const Icon(Icons.arrow_back, size: 14),
+                  label: const Text('All scripts'),
+                ),
+                ?resultActions,
+              ],
             );
     }
 
-    final Widget results = SectionCard(
-      title: controller.showingClass
-          ? '4. Class results'
-          : controller.isClass && controller.answerSheet != null
-              ? '4. ${controller.answerSheet!.fileName}'
-              : '4. Correction result',
+    // What the pane shows changes with a short fade, not a jump.
+    final String showing = controller.isProcessing
+        ? (controller.job == null ? 'starting' : 'processing')
+        : controller.showingClass
+            ? 'class'
+            : 'script-${identityHashCode(assessment)}';
+    final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    body = AnimatedSwitcher(
+      duration: still ? Duration.zero : const Duration(milliseconds: 160),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      layoutBuilder: (Widget? current, List<Widget> previous) =>
+          Stack(fit: StackFit.expand, children: <Widget>[...previous, ?current]),
+      child: KeyedSubtree(key: ValueKey<String>(showing), child: body),
+    );
+
+    return AppCard(
+      divided: true,
       expandChild: true,
+      padding: const EdgeInsets.all(AppTheme.pagePadding),
+      title: controller.isProcessing
+          ? 'Marking'
+          : controller.showingClass
+              ? 'Class results'
+              : controller.isClass && controller.answerSheet != null
+                  ? controller.answerSheet!.fileName
+                  : 'Correction result',
+      subtitle: controller.isProcessing || controller.showingClass || assessment == null
+          ? null
+          : _ResultActions.summary(assessment),
       trailing: actions,
       child: body,
     );
-
-    // The two documents sit side by side. They are the same shape and are
-    // chosen one after the other, and stacking them would push the results
-    // pane off the bottom of an ordinary window.
-    final Widget documents = Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Expanded(child: answerSheet),
-        const SizedBox(width: AppTheme.gap),
-        Expanded(child: questionPaper),
-      ],
-    );
-
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        // Below this the two documents no longer fit beside each other.
-        final bool narrow = constraints.maxWidth < 820;
-
-        final List<Widget> steps = <Widget>[
-          if (narrow) ...<Widget>[
-            answerSheet,
-            const SizedBox(height: AppTheme.gap),
-            questionPaper,
-          ] else
-            documents,
-          const SizedBox(height: AppTheme.gap),
-          // The syllabus library sits beside the guidance: both shape how the
-          // answers are judged.
-          if (!controller.hasSyllabusLibrary)
-            guidance
-          else if (narrow) ...<Widget>[
-            guidance,
-            const SizedBox(height: AppTheme.gap),
-            SyllabusSection(controller: controller),
-          ] else
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(flex: 3, child: guidance),
-                const SizedBox(width: AppTheme.gap),
-                Expanded(flex: 2, child: SyllabusSection(controller: controller)),
-              ],
-            ),
-          const SizedBox(height: AppTheme.gap),
-        ];
-
-        // A short window scrolls rather than overflowing; a normal one gives
-        // the results pane every remaining pixel.
-        if (constraints.maxHeight < _comfortableHeight) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(AppTheme.pagePadding),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                ...steps,
-                SizedBox(height: 420, child: results),
-              ],
-            ),
-          );
-        }
-
-        return Padding(
-          padding: const EdgeInsets.all(AppTheme.pagePadding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              ...steps,
-              Expanded(child: results),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// The bar across the top: what the application is, and its one command.
-/// Which syllabus the chosen paper is marked against, and a way to change it.
-class _SyllabusLine extends StatelessWidget {
-  const _SyllabusLine({required this.controller});
-
-  final CorrectionController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    final ({String name, String how})? inUse = controller.syllabusInUse;
-    final String text = inUse != null
-        ? 'Syllabus: ${inUse.name} · ${inUse.how}'
-        : controller.syllabusChoice == SyllabusLibrary.none
-            ? 'Marked without a syllabus · chosen by you'
-            : controller.syllabi.isEmpty
-                ? 'No syllabi saved yet — add one with Syllabi above'
-                : 'No saved syllabus matches this paper';
-
-    return Row(
-      children: <Widget>[
-        Icon(Icons.menu_book_outlined,
-            size: 15, color: inUse == null ? AppTheme.textSecondary : AppTheme.accent),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            text,
-            key: const Key('syllabus-line'),
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: inUse == null ? AppTheme.textSecondary : null,
-            ),
-          ),
-        ),
-        if (controller.syllabi.isNotEmpty)
-          PopupMenuButton<String>(
-            key: const Key('syllabus-choose'),
-            enabled: !controller.isBusy,
-            tooltip: 'Choose the syllabus for this paper',
-            onSelected: (String value) =>
-                controller.chooseSyllabus(value == _auto ? null : value),
-            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-              CheckedPopupMenuItem<String>(
-                value: _auto,
-                checked: controller.syllabusChoice == null,
-                child: const Text('Match automatically'),
-              ),
-              const PopupMenuDivider(),
-              for (final Syllabus syllabus in controller.syllabi)
-                CheckedPopupMenuItem<String>(
-                  value: syllabus.id,
-                  checked: controller.syllabusChoice == syllabus.id,
-                  child: Text(syllabus.name),
-                ),
-              const PopupMenuDivider(),
-              CheckedPopupMenuItem<String>(
-                value: SyllabusLibrary.none,
-                checked: controller.syllabusChoice == SyllabusLibrary.none,
-                child: const Text('No syllabus'),
-              ),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              child: Text('Change…',
-                  style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.accent)),
-            ),
-          ),
-      ],
-    );
   }
 
-  static const String _auto = '__auto__';
+  /// Below this width the rail and the results stack.
+  static const double _sideBySideWidth = 960;
 }
-
-class _CommandBar extends StatelessWidget {
-  const _CommandBar({
-    required this.model,
-    required this.hasApiKey,
-    required this.onSettings,
-    this.onSyllabi,
-    this.usage,
-    this.onSwitchRole,
-    this.openRequests,
-    this.onRequests,
-    this.onStudents,
-  });
-
-  /// Opens the table of where every student stands.
-  final VoidCallback? onStudents;
-
-  final VoidCallback? onSwitchRole;
-
-  /// Students' correction requests waiting; null where there are none to
-  /// show.
-  final int? openRequests;
-  final VoidCallback? onRequests;
-
-  /// What the AI is doing and how much it has been used; replaces the model
-  /// name where available.
-  final Widget? usage;
-
-  final String model;
-  final bool hasApiKey;
-  final VoidCallback onSettings;
-
-  /// Opens the syllabus library; null where there is none.
-  final VoidCallback? onSyllabi;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-
-    return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(horizontal: AppTheme.pagePadding),
-      decoration: const BoxDecoration(
-        color: AppTheme.cardBackground,
-        border: Border(bottom: BorderSide(color: AppTheme.stroke)),
-      ),
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          // The model chip is context, not a control: it is the first thing to
-          // go when the window is narrow.
-          final bool showChip = constraints.maxWidth >= 620;
-          // The tools shrink to icons before anything overflows.
-          final bool compact = constraints.maxWidth < 1000;
-          Widget tool({
-            required Key key,
-            required VoidCallback onPressed,
-            required IconData icon,
-            required String label,
-          }) =>
-              compact
-                  ? IconButton(key: key, tooltip: label, onPressed: onPressed, icon: Icon(icon, size: 18))
-                  : OutlinedButton.icon(
-                      key: key,
-                      onPressed: onPressed,
-                      icon: Icon(icon, size: 16),
-                      label: Text(label),
-                    );
-
-          return Row(
-            children: <Widget>[
-              const Icon(Icons.rule_folder_outlined,
-                  size: 18, color: AppTheme.accent),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  'Exam Corrector',
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleMedium,
-                ),
-              ),
-              if (usage != null) ...<Widget>[
-                const SizedBox(width: 12),
-                Flexible(child: usage!),
-              ] else if (showChip) ...<Widget>[
-                const SizedBox(width: 12),
-                Flexible(
-                  child: _Chip(
-                    label: model,
-                    icon: Icons.auto_awesome_outlined,
-                    warn: !hasApiKey,
-                  ),
-                ),
-              ],
-              const Spacer(),
-              if (onStudents != null) ...<Widget>[
-                tool(
-                  key: const Key('open-students'),
-                  onPressed: onStudents!,
-                  icon: Icons.groups_outlined,
-                  label: 'Students',
-                ),
-                const SizedBox(width: 8),
-              ],
-              if (onRequests != null) ...<Widget>[
-                Badge(
-                  isLabelVisible: (openRequests ?? 0) > 0,
-                  label: Text('${openRequests ?? 0}'),
-                  child: tool(
-                    key: const Key('open-requests'),
-                    onPressed: onRequests!,
-                    icon: Icons.rate_review_outlined,
-                    label: 'Requests',
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              if (onSyllabi != null) ...<Widget>[
-                tool(
-                  key: const Key('open-syllabi'),
-                  onPressed: onSyllabi!,
-                  icon: Icons.menu_book_outlined,
-                  label: 'Syllabi',
-                ),
-                const SizedBox(width: 8),
-              ],
-              OutlinedButton.icon(
-                onPressed: onSettings,
-                icon: const Icon(Icons.settings_outlined, size: 16),
-                label: const Text('Settings'),
-              ),
-              if (onSwitchRole != null) ...<Widget>[
-                const SizedBox(width: 8),
-                IconButton(
-                  key: const Key('switch-role'),
-                  tooltip: 'Switch role',
-                  onPressed: onSwitchRole,
-                  icon: const Icon(Icons.logout, size: 18),
-                ),
-              ],
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.icon, this.warn = false});
-
-  final String label;
-  final IconData icon;
-  final bool warn;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color colour = warn ? AppTheme.caution : AppTheme.textSecondary;
-
-    return Tooltip(
-      message: warn
-          ? 'No API key set — open Settings to add one.'
-          : 'Marking runs on $label',
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: warn ? AppTheme.cautionFill : AppTheme.pageBackground,
-          border: Border.all(
-            color: warn ? const Color(0xFFE8CE6A) : AppTheme.stroke,
-          ),
-          borderRadius: BorderRadius.circular(AppTheme.controlRadius),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(warn ? Icons.key_off_outlined : icon, size: 13, color: colour),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: colour),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// What was marked and by which model, and what can be done with it.
-///
-/// The model belongs with the result rather than the command bar: when a
-/// model's daily quota runs out mid-batch, marking moves down the chain, and
-/// the teacher should be able to see which model produced these marks.
-class _ResultActions extends StatelessWidget {
-  const _ResultActions({
-    required this.assessment,
-    required this.developerMode,
-    required this.onExport,
-    required this.onInspect,
-    this.onPublish,
-    this.publishBlocker,
-  });
-
-  final ExamAssessment assessment;
-  final bool developerMode;
-  final VoidCallback? onExport;
-  final VoidCallback onInspect;
-
-  /// Publishes the result for its student; null where publishing is off.
-  final VoidCallback? onPublish;
-
-  /// Why it cannot be published yet.
-  final String? publishBlocker;
-
-  @override
-  Widget build(BuildContext context) {
-    final CorrectionResult? result = assessment.result;
-    final TextStyle? style = Theme.of(context)
-        .textTheme
-        .bodySmall
-        ?.copyWith(color: AppTheme.textSecondary);
-    final int pages = assessment.answerSheet.pages
-        .where((ExamPage page) => !page.isBlank)
-        .length;
-
-    final String summary = <String>[
-      if (result != null)
-        '${result.questions.length} question${result.questions.length == 1 ? '' : 's'}',
-      '$pages page${pages == 1 ? '' : 's'} read',
-      if (result != null && result.model.isNotEmpty) 'Marked by ${result.model}',
-    ].join('   ·   ');
-
-    return Flexible(
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          // Buttons shrink to icons before anything overflows.
-          final bool compact = constraints.maxWidth < 440;
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: <Widget>[
-              Flexible(
-                child: Text(summary, overflow: TextOverflow.ellipsis, style: style),
-              ),
-              const SizedBox(width: 8),
-              if (developerMode)
-                compact
-                    ? IconButton(
-                        tooltip: 'Inspect pages',
-                        onPressed: onInspect,
-                        icon: const Icon(Icons.bug_report_outlined, size: 18),
-                      )
-                    : Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: OutlinedButton.icon(
-                          onPressed: onInspect,
-                          icon: const Icon(Icons.bug_report_outlined, size: 16),
-                          label: const Text('Inspect pages'),
-                        ),
-                      ),
-              if (onPublish != null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Tooltip(
-                    message: publishBlocker == null
-                        ? 'Let the student see these marks'
-                        : 'Review the flagged questions first: $publishBlocker',
-                    child: compact
-                        ? IconButton(
-                            key: const Key('publish'),
-                            onPressed: publishBlocker == null ? onPublish : null,
-                            icon: const Icon(Icons.campaign_outlined, size: 18),
-                          )
-                        : OutlinedButton.icon(
-                            key: const Key('publish'),
-                            onPressed: publishBlocker == null ? onPublish : null,
-                            icon: const Icon(Icons.campaign_outlined, size: 16),
-                            label: const Text('Publish'),
-                          ),
-                  ),
-                ),
-              if (compact)
-                IconButton(
-                  tooltip: 'Export…',
-                  onPressed: onExport,
-                  icon: const Icon(Icons.download_outlined, size: 18),
-                )
-              else
-                OutlinedButton.icon(
-                  onPressed: onExport,
-                  icon: const Icon(Icons.download_outlined, size: 16),
-                  label: const Text('Export…'),
-                ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// Where a script is published: the student's roll number, the subject and
-/// the exam — what the student signs in with.
-class _PublishDialog extends StatefulWidget {
-  const _PublishDialog({
-    required this.fileName,
-    required this.rollNo,
-    required this.subjectCode,
-    required this.exam,
-  });
-
-  final String fileName;
-  final String rollNo;
-  final String subjectCode;
-  final String exam;
-
-  @override
-  State<_PublishDialog> createState() => _PublishDialogState();
-}
-
-class _PublishDialogState extends State<_PublishDialog> {
-  late final TextEditingController _roll = TextEditingController(text: widget.rollNo);
-  final TextEditingController _name = TextEditingController();
-  late final TextEditingController _subject = TextEditingController(text: widget.subjectCode);
-  late final TextEditingController _exam = TextEditingController(text: widget.exam);
-
-  @override
-  void dispose() {
-    for (final TextEditingController c in <TextEditingController>[_roll, _name, _subject, _exam]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  bool get _ready => _roll.text.trim().isNotEmpty && _subject.text.trim().isNotEmpty;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Publish to the student'),
-      content: SizedBox(
-        width: 460,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Text('${widget.fileName}. The student sees the final marks, section totals, '
-                'each question’s explanation and your comments, and can ask you to look '
-                'again at a mark.'),
-            const SizedBox(height: 12),
-            TextField(
-              key: const Key('publish-roll'),
-              controller: _roll,
-              autofocus: widget.rollNo.isEmpty,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(labelText: 'Roll number *'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              key: const Key('publish-name'),
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Student name (optional)'),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: TextField(
-                    key: const Key('publish-subject'),
-                    controller: _subject,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(labelText: 'Subject code *', hintText: 'CCS356'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    key: const Key('publish-exam'),
-                    controller: _exam,
-                    decoration: const InputDecoration(labelText: 'Exam', hintText: 'CAT 1'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(
-          key: const Key('publish-confirm'),
-          onPressed: _ready
-              ? () => Navigator.of(context).pop((
-                    rollNo: _roll.text,
-                    student: _name.text,
-                    subjectCode: _subject.text,
-                    exam: _exam.text,
-                  ))
-              : null,
-          child: const Text('Publish'),
-        ),
-      ],
-    );
-  }
-}
-
-/// A class published at once: one subject and exam, each script's roll
-/// number found in its file name or typed in.
-class _PublishClassDialog extends StatefulWidget {
-  const _PublishClassDialog({required this.scripts, required this.subjectCode, required this.exam});
-
-  final List<MarkedScript> scripts;
-  final String subjectCode;
-  final String exam;
-
-  @override
-  State<_PublishClassDialog> createState() => _PublishClassDialogState();
-}
-
-class _PublishClassDialogState extends State<_PublishClassDialog> {
-  late final TextEditingController _subject = TextEditingController(text: widget.subjectCode);
-  late final TextEditingController _exam = TextEditingController(text: widget.exam);
-  late final Map<int, TextEditingController> _rolls = <int, TextEditingController>{
-    for (int i = 0; i < widget.scripts.length; i++)
-      if (widget.scripts[i].result != null)
-        i: TextEditingController(
-          text: PublishedResult.rollFromFileName(widget.scripts[i].document.fileName) ?? '',
-        ),
-  };
-
-  @override
-  void dispose() {
-    _subject.dispose();
-    _exam.dispose();
-    for (final TextEditingController c in _rolls.values) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return AlertDialog(
-      title: const Text('Publish the class to students'),
-      content: SizedBox(
-        width: 560,
-        height: 440,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: TextField(
-                    key: const Key('class-subject'),
-                    controller: _subject,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(labelText: 'Subject code *'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(controller: _exam, decoration: const InputDecoration(labelText: 'Exam')),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text('Roll number for each script — scripts left blank are not published.',
-                style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
-            const SizedBox(height: 6),
-            Expanded(
-              child: ListView(
-                children: <Widget>[
-                  for (final MapEntry<int, TextEditingController> entry in _rolls.entries)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: Text(widget.scripts[entry.key].document.fileName,
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 160,
-                            child: TextField(
-                              controller: entry.value,
-                              decoration: const InputDecoration(isDense: true, hintText: 'Roll number'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(
-          key: const Key('class-publish-confirm'),
-          onPressed: _subject.text.trim().isEmpty
-              ? null
-              : () => Navigator.of(context).pop((
-                    subjectCode: _subject.text,
-                    exam: _exam.text,
-                    rollNos: <int, String>{
-                      for (final MapEntry<int, TextEditingController> e in _rolls.entries) e.key: e.value.text,
-                    },
-                  )),
-          child: const Text('Publish'),
-        ),
-      ],
-    );
-  }
-}
-

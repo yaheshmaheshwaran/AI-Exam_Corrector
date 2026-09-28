@@ -11,6 +11,7 @@ import 'package:exam_corrector/services/results/results_repository.dart';
 import 'package:exam_corrector/state/app_session.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
+import 'account_fakes.dart';
 import 'fakes.dart';
 
 void main() {
@@ -38,10 +39,10 @@ void main() {
     big(tester);
     late CorrectionController controller;
     await tester.runAsync(() async => controller = await published());
-    await tester.pumpWidget(ExamCorrectorApp(controller: controller, session: AppSession(role: AppRole.student), results: db));
+    final Account student = MemoryAccountRepository.withCollege().account('priya');
+    await tester.pumpWidget(ExamCorrectorApp(controller: controller, session: AppSession.signedIn(student), results: db));
     await tester.pump();
 
-    await tester.enterText(find.byKey(const Key('student-roll')), '21CS045');
     await tester.enterText(find.byKey(const Key('student-subject')), 'CCS356');
     await tester.runAsync(() async {
       await tester.tap(find.byKey(const Key('student-search')));

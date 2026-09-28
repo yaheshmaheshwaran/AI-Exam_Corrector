@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
+import 'package:exam_corrector/widgets/ui/app_dialog.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/widgets/ui/status_pill.dart';
 
 /// The paper's answer key, question by question, for the teacher to check
 /// and correct — as a chief examiner settles the scheme before marking.
@@ -21,7 +24,7 @@ class AnswerKeyDialog extends StatefulWidget {
     required QuestionPaper paper,
     AnswerKey? key,
   }) =>
-      showDialog<Map<String, String>>(
+      showAppDialog<Map<String, String>>(
         context: context,
         builder: (BuildContext context) => AnswerKeyDialog(paper: paper, answerKey: key),
       );
@@ -49,7 +52,10 @@ class _AnswerKeyDialogState extends State<AnswerKeyDialog> {
     super.dispose();
   }
 
-  String _aiKey(String id) => widget.answerKey?.entries[id]?.text ?? '';
+  /// The key before the teacher's corrections: their own key, else the AI's.
+  String _base(String id) => widget.answerKey?.baseTextFor(id) ?? '';
+
+  bool _fromTeacherKey(String id) => !(widget.answerKey?.teacher[id]?.isEmpty ?? true);
 
   @override
   Widget build(BuildContext context) {
@@ -67,12 +73,12 @@ class _AnswerKeyDialogState extends State<AnswerKeyDialog> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   Text(
-                    'Prepared from the questions alone, before any answer was read, so every script '
-                    'is marked against the same points. Correct anything a real examiner would not '
-                    'accept — the marks each point is worth, what earns them, how long a full answer '
-                    'is ("about 300 words"). Changes apply when the scripts are re-marked.'
+                    'Questions your answer key covers are marked against it; the rest use a key the AI '
+                    'prepares from the questions alone, before any answer is read. Correct anything a '
+                    'real examiner would not accept — the marks each point is worth, what earns them, how '
+                    'long a full answer is ("about 300 words"). Changes apply when the scripts are re-marked.'
                     '${_printed > 0 ? ' $_printed question${_printed == 1 ? '' : 's'} with a printed mark scheme follow it instead.' : ''}',
-                    style: small?.copyWith(color: AppTheme.textSecondary),
+                    style: small?.copyWith(color: context.colors.textMuted),
                   ),
                   const SizedBox(height: 10),
                   Expanded(
@@ -105,8 +111,16 @@ class _AnswerKeyDialogState extends State<AnswerKeyDialog> {
 
   Widget _question(Question q, ThemeData theme) {
     final TextEditingController text = _text[q.questionId]!;
-    final String ai = _aiKey(q.questionId);
+    final String ai = _base(q.questionId);
     final bool edited = text.text.trim() != ai.trim();
+    final bool own = _fromTeacherKey(q.questionId);
+    final (String label, ToneKind tone) source = edited && text.text.trim().isNotEmpty
+        ? ('Your correction', ToneKind.primary)
+        : own
+            ? ('Your key', ToneKind.success)
+            : ai.isNotEmpty
+                ? ('AI key', ToneKind.neutral)
+                : ('Prepared when marking starts', ToneKind.neutral);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Column(
@@ -123,11 +137,18 @@ class _AnswerKeyDialogState extends State<AnswerKeyDialog> {
                   style: theme.textTheme.titleSmall,
                 ),
               ),
+              const SizedBox(width: 8),
+              StatusPill(
+                key: ValueKey<String>('answer-key-source-${q.questionId}'),
+                label: source.$1,
+                tone: source.$2,
+                dense: true,
+              ),
               if (edited && ai.isNotEmpty)
                 TextButton(
                   key: ValueKey<String>('answer-key-reset-${q.questionId}'),
                   onPressed: () => setState(() => text.text = ai),
-                  child: const Text('Use the AI’s key'),
+                  child: Text(own ? 'Use your key' : 'Use the AI’s key'),
                 ),
             ],
           ),
@@ -143,7 +164,7 @@ class _AnswerKeyDialogState extends State<AnswerKeyDialog> {
               hintText: ai.isEmpty
                   ? 'No key yet — write the points a full answer needs, with their marks.'
                   : null,
-              helperText: edited ? 'Your key — used in place of the AI’s.' : null,
+              helperText: edited ? (own ? 'Your correction — used in place of your key.' : 'Your key — used in place of the AI’s.') : null,
               contentPadding: const EdgeInsets.all(10),
             ),
           ),

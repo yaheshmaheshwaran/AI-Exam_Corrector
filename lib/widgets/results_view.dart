@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
@@ -11,6 +10,7 @@ import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/models/section_totals.dart';
 import 'package:exam_corrector/widgets/syllabus_badge.dart';
+import 'package:exam_corrector/widgets/ui/ui.dart';
 
 /// The marked paper, section by section and question by question.
 ///
@@ -27,6 +27,7 @@ class ResultsView extends StatefulWidget {
     required this.onOpenQuestion,
     this.pendingCorrections = false,
     this.onRemark,
+    this.emptyDetail,
   });
 
   final ExamAssessment? assessment;
@@ -34,6 +35,9 @@ class ResultsView extends StatefulWidget {
   final ValueChanged<String> onOpenQuestion;
   final bool pendingCorrections;
   final VoidCallback? onRemark;
+
+  /// Shown under the empty state: what is still needed before marking.
+  final Widget? emptyDetail;
 
   @override
   State<ResultsView> createState() => _ResultsViewState();
@@ -47,6 +51,14 @@ class _ResultsViewState extends State<ResultsView> {
   /// Sections the teacher folded away, by short name.
   final Set<String> _collapsed = <String>{};
 
+  /// The pinned total's height, measured, so the last row scrolls clear.
+  double _total = 90;
+
+  // When a new result arrives its first rows rise into place once; rows
+  // built later — by scrolling, or after a review — simply appear.
+  Object? _arrivedFor;
+  DateTime _arrivedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   @override
   void dispose() {
     _scroll.dispose();
@@ -55,39 +67,51 @@ class _ResultsViewState extends State<ResultsView> {
 
   @override
   Widget build(BuildContext context) {
+    final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (!identical(widget.assessment?.result, _arrivedFor)) {
+      _arrivedFor = widget.assessment?.result;
+      if (!still && _arrivedFor != null) _arrivedAt = DateTime.now();
+    }
     final ExamAssessment? assessment = widget.assessment;
     if (assessment == null) {
-      return const _Placeholder(
+      return _Placeholder(
         icon: Icons.fact_check_outlined,
         message: 'Correction results will appear here.',
+        detail: widget.emptyDetail,
       );
     }
 
     final CorrectionResult? result = assessment.result;
     final List<Widget> rows = <Widget>[
       if (widget.pendingCorrections)
-        _Notice(
+        InfoBanner(
           icon: Icons.edit_note,
           title: 'Transcriptions were corrected',
-          body: 'Re-mark to apply them. Only the questions whose answers '
+          body:
+              'Re-mark to apply them. Only the questions whose answers '
               'changed are sent for marking again.',
           action: widget.onRemark == null
               ? null
-              : OutlinedButton(onPressed: widget.onRemark, child: const Text('Re-mark')),
+              : OutlinedButton(
+                  onPressed: widget.onRemark,
+                  child: const Text('Re-mark'),
+                ),
         ),
       if (result != null && result.foundNoAnswers)
-        const _Notice(
+        const InfoBanner(
           icon: Icons.help_outline,
           title: 'No answers were found anywhere in this paper',
-          body: 'Every question scored zero because the marked file contains no '
-              "student answers. Check that step 1 holds the student's completed "
+          body:
+              'Every question scored zero because the marked file contains no '
+              "student answers. Check that the answer sheet is the student's completed "
               'script — it is easy to choose the blank question paper for both.',
         ),
       if (result == null)
-        _Notice(
+        InfoBanner(
           icon: Icons.pause_circle_outline,
           title: 'Not marked yet',
-          body: assessment.job.error ??
+          body:
+              assessment.job.error ??
               'Marking did not finish. Everything read from the paper is kept.',
           action: widget.onRemark == null
               ? null
@@ -124,7 +148,8 @@ class _ResultsViewState extends State<ResultsView> {
     if (sections.isEmpty) {
       rows.addAll(<Widget>[
         if (result != null)
-          for (final QuestionResult question in result.questions) rowFor(question.questionId)
+          for (final QuestionResult question in result.questions)
+            rowFor(question.questionId)
         else
           for (final Question question in assessment.questionPaper.markable)
             rowFor(question.questionId),
@@ -132,14 +157,18 @@ class _ResultsViewState extends State<ResultsView> {
     } else {
       for (final SectionTotal section in sections) {
         final bool collapsed = _collapsed.contains(section.shortName);
-        rows.add(_SectionHeader(
-          section: section,
-          marked: result != null,
-          collapsed: collapsed,
-          onToggle: () => setState(() => collapsed
-              ? _collapsed.remove(section.shortName)
-              : _collapsed.add(section.shortName)),
-        ));
+        rows.add(
+          _SectionHeader(
+            section: section,
+            marked: result != null,
+            collapsed: collapsed,
+            onToggle: () => setState(
+              () => collapsed
+                  ? _collapsed.remove(section.shortName)
+                  : _collapsed.add(section.shortName),
+            ),
+          ),
+        );
         if (!collapsed) rows.addAll(section.questionIds.map(rowFor));
       }
     }
@@ -153,23 +182,61 @@ class _ResultsViewState extends State<ResultsView> {
             ? const SizedBox.shrink()
             : Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: _TotalBar(result: result, reviews: widget.reviews, sections: sections),
+                child: _TotalBar(
+                  result: result,
+                  reviews: widget.reviews,
+                  sections: sections,
+                ),
               );
 
-        return Column(
-          children: <Widget>[
-            Expanded(
-              child: Scrollbar(
+        final Widget list = Scrollbar(
+          controller: _scroll,
+          thumbVisibility: true,
+          child: Builder(
+            builder: (BuildContext context) {
+              // Built as they scroll into view: a long paper has many rows.
+              final List<Widget> items = <Widget>[
+                ...rows,
+                if (!pinTotal) total,
+              ];
+              return ListView.builder(
                 controller: _scroll,
-                thumbVisibility: true,
-                child: ListView(
-                  controller: _scroll,
-                  padding: const EdgeInsets.only(right: 10),
-                  children: <Widget>[...rows, if (!pinTotal) total],
+                // Clear of the pinned total, which the rows scroll beneath.
+                padding: EdgeInsets.only(
+                  right: 10,
+                  bottom: pinTotal && result != null ? _total : 0,
                 ),
+                itemCount: items.length,
+                itemBuilder: (BuildContext context, int index) {
+                  final bool entering =
+                      index < 10 &&
+                      DateTime.now().difference(_arrivedAt) <
+                          const Duration(milliseconds: 400);
+                  return entering
+                      ? _Enter(index: index, child: items[index])
+                      : items[index];
+                },
+              );
+            },
+          ),
+        );
+        if (!pinTotal || result == null) return list;
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(child: RepaintBoundary(child: list)),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: MeasureSize(
+                onSize: (Size size) {
+                  if (mounted && size.height != _total) {
+                    setState(() => _total = size.height);
+                  }
+                },
+                child: total,
               ),
             ),
-            if (pinTotal) total,
           ],
         );
       },
@@ -201,9 +268,9 @@ class _QuestionRow extends StatelessWidget {
     final Widget row = Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Material(
-        color: AppTheme.cardBackground,
+        color: context.colors.surface,
         shape: RoundedRectangleBorder(
-          side: const BorderSide(color: AppTheme.stroke),
+          side: BorderSide(color: context.colors.border),
           borderRadius: BorderRadius.circular(AppTheme.controlRadius),
         ),
         child: InkWell(
@@ -227,48 +294,80 @@ class _QuestionRow extends StatelessWidget {
                     counted ? question.evaluation : question.choiceNote,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                    style: context.text.caption,
                   ),
                 ),
                 const SizedBox(width: 10),
-                if (question.syllabusAward case final SyllabusAward award when award.hasBadge && counted) ...<Widget>[
-                  SyllabusBadgeChip(badge: award.badge, bonus: award.bonus, tooltip: award.summary),
+                if (question.syllabusAward case final SyllabusAward award
+                    when award.hasBadge && counted) ...<Widget>[
+                  SyllabusBadgeChip(
+                    badge: award.badge,
+                    bonus: award.bonus,
+                    tooltip: award.summary,
+                  ),
                   const SizedBox(width: 6),
                 ],
                 if (!counted)
-                  const _Tag(
+                  const StatusPill(
                     label: 'Not counted',
                     icon: Icons.alt_route,
-                    colour: AppTheme.textSecondary,
+                    dense: true,
                   )
-                else if (question.adjustments.isNotEmpty && status == ReviewStatus.pending && !question.needsReview)
+                else if (question.adjustments.isNotEmpty &&
+                    status == ReviewStatus.pending &&
+                    !question.needsReview)
                   Tooltip(
                     message: question.adjustments.join('\n'),
-                    child: const _Tag(label: 'Adjusted', icon: Icons.tune, colour: AppTheme.textSecondary),
+                    child: const StatusPill(
+                      label: 'Adjusted',
+                      icon: Icons.tune,
+                      dense: true,
+                    ),
                   )
                 else if (status == ReviewStatus.overridden)
-                  const _Tag(label: 'Changed', icon: Icons.edit, colour: AppTheme.accent)
+                  const StatusPill(
+                    label: 'Changed',
+                    icon: Icons.edit,
+                    tone: ToneKind.primary,
+                    dense: true,
+                  )
                 else if (status == ReviewStatus.accepted)
-                  const _Tag(label: 'Accepted', icon: Icons.check, colour: AppTheme.success)
+                  const StatusPill(
+                    label: 'Accepted',
+                    icon: Icons.check,
+                    tone: ToneKind.success,
+                    dense: true,
+                  )
+                else if (question.keyMatch == KeyMatch.equivalent)
+                  const StatusPill(
+                    label: 'Differs from your key',
+                    icon: Icons.compare_arrows,
+                    tone: ToneKind.warning,
+                    dense: true,
+                    tooltip:
+                        'Credited as a correct answer that is not the one in your key — check it.',
+                  )
                 else if (question.needsReview)
-                  const _Tag(
+                  const StatusPill(
                     label: 'Review',
                     icon: Icons.flag_outlined,
-                    colour: AppTheme.caution,
+                    tone: ToneKind.warning,
+                    dense: true,
                   ),
                 const SizedBox(width: 8),
                 Tooltip(
                   message: 'How sure the marking is',
                   child: Text(
                     '${(question.confidence * 100).round()}%',
-                    style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                    style: context.text.caption,
                   ),
                 ),
                 const SizedBox(width: 10),
                 MarksBadge(
                   awarded: finalMarks,
                   maximum: question.maximumMarks,
-                  gold: counted && question.syllabusBadge != SyllabusBadge.none,
+                  bonus:
+                      counted && question.syllabusBadge != SyllabusBadge.none,
                 ),
                 const SizedBox(width: 4),
                 const Icon(Icons.chevron_right, size: 18),
@@ -280,7 +379,10 @@ class _QuestionRow extends StatelessWidget {
     );
     return counted
         ? row
-        : Tooltip(message: question.choiceNote, child: Opacity(opacity: 0.6, child: row));
+        : Tooltip(
+            message: question.choiceNote,
+            child: Opacity(opacity: 0.6, child: row),
+          );
   }
 }
 
@@ -309,7 +411,7 @@ class _SectionHeader extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 6),
       child: Material(
-        color: AppTheme.pageBackground,
+        color: context.colors.surfaceMuted,
         borderRadius: BorderRadius.circular(AppTheme.controlRadius),
         child: InkWell(
           key: ValueKey<String>('section-${section.shortName}'),
@@ -319,7 +421,10 @@ class _SectionHeader extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             child: Row(
               children: <Widget>[
-                Icon(collapsed ? Icons.chevron_right : Icons.expand_more, size: 18),
+                Icon(
+                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  size: 18,
+                ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Column(
@@ -336,16 +441,17 @@ class _SectionHeader extends StatelessWidget {
                           section.instructions.replaceAll('\n', ' '),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                          style: context.text.caption,
                         ),
                     ],
                   ),
                 ),
                 if (section.toReview > 0) ...<Widget>[
-                  _Tag(
+                  StatusPill(
                     label: '${section.toReview} to review',
                     icon: Icons.flag_outlined,
-                    colour: AppTheme.caution,
+                    tone: ToneKind.warning,
+                    dense: true,
                   ),
                   const SizedBox(width: 10),
                 ],
@@ -357,13 +463,14 @@ class _SectionHeader extends StatelessWidget {
                       child: LinearProgressIndicator(
                         value: section.fraction,
                         minHeight: 5,
-                        backgroundColor: const Color(0xFFDCE9F5),
+                        backgroundColor: context.colors.track,
                       ),
                     ),
                   ),
                 const SizedBox(width: 10),
                 Tooltip(
-                  message: stated != null && (stated - section.maximum).abs() > 0.001
+                  message:
+                      stated != null && (stated - section.maximum).abs() > 0.001
                       ? 'The paper prints ${formatMarks(stated)} marks for this section.'
                       : 'Marks for this section',
                   child: Text(
@@ -382,7 +489,11 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _UnmarkedRow extends StatelessWidget {
-  const _UnmarkedRow({required this.question, required this.answer, required this.onOpen});
+  const _UnmarkedRow({
+    required this.question,
+    required this.answer,
+    required this.onOpen,
+  });
 
   final Question question;
   final StudentAnswer? answer;
@@ -397,11 +508,14 @@ class _UnmarkedRow extends StatelessWidget {
     return ListTile(
       dense: true,
       onTap: onOpen,
-      title: Text('Question ${question.displayNumber}', style: theme.textTheme.titleSmall),
+      title: Text(
+        'Question ${question.displayNumber}',
+        style: theme.textTheme.titleSmall,
+      ),
       subtitle: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: Text(
         'not marked · ${formatMarks(question.maximumMarks ?? 0)} available',
-        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+        style: context.text.caption,
       ),
     );
   }
@@ -409,112 +523,43 @@ class _UnmarkedRow extends StatelessWidget {
 
 /// Awarded out of maximum, coloured by how much was earned.
 class MarksBadge extends StatelessWidget {
-  const MarksBadge({super.key, required this.awarded, required this.maximum, this.gold = false});
+  const MarksBadge({
+    super.key,
+    required this.awarded,
+    required this.maximum,
+    this.bonus = false,
+  });
 
   final double awarded;
   final double maximum;
 
-  /// Gold for an answer that earned a syllabus badge.
-  final bool gold;
+  /// Marked in the bonus colour: the answer earned a syllabus badge.
+  final bool bonus;
 
   @override
   Widget build(BuildContext context) {
     final bool full = maximum > 0 && awarded >= maximum;
     final bool none = awarded <= 0;
-    final Color foreground = gold
-        ? AppTheme.gold
-        : full
-        ? AppTheme.success
-        : none
-            ? AppTheme.danger
-            : AppTheme.caution;
-    final Color background = gold
-        ? AppTheme.goldFill
-        : full
-        ? AppTheme.successFill
-        : none
-            ? AppTheme.dangerFill
-            : AppTheme.cautionFill;
+    final Tone tone = context.colors.tone(
+      bonus
+          ? ToneKind.bonus
+          : full
+          ? ToneKind.success
+          : none
+          ? ToneKind.danger
+          : ToneKind.warning,
+    );
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: background,
-        border: Border.all(color: foreground.withValues(alpha: 0.35)),
+        color: tone.fill,
+        border: Border.all(color: tone.border),
         borderRadius: BorderRadius.circular(AppTheme.controlRadius),
       ),
       child: Text(
         '${formatMarks(awarded)} / ${formatMarks(maximum)}',
-        style: TextStyle(color: foreground, fontWeight: FontWeight.w600, fontSize: 13),
-      ),
-    );
-  }
-}
-
-class _Tag extends StatelessWidget {
-  const _Tag({required this.label, required this.icon, required this.colour});
-
-  final String label;
-  final IconData icon;
-  final Color colour;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: colour.withValues(alpha: 0.08),
-        border: Border.all(color: colour.withValues(alpha: 0.35)),
-        borderRadius: BorderRadius.circular(AppTheme.controlRadius),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(icon, size: 12, color: colour),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 11.5, color: colour)),
-        ],
-      ),
-    );
-  }
-}
-
-class _Notice extends StatelessWidget {
-  const _Notice({required this.icon, required this.title, required this.body, this.action});
-
-  final IconData icon;
-  final String title;
-  final String body;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.cautionFill,
-        border: Border.all(color: const Color(0xFFE8CE6A)),
-        borderRadius: BorderRadius.circular(AppTheme.controlRadius),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Icon(icon, size: 16, color: AppTheme.caution),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(title, style: theme.textTheme.titleSmall?.copyWith(color: AppTheme.caution)),
-                const SizedBox(height: 2),
-                Text(body, style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution)),
-              ],
-            ),
-          ),
-          if (action != null) ...<Widget>[const SizedBox(width: 8), action!],
-        ],
+        style: context.text.mark.copyWith(color: tone.foreground),
       ),
     );
   }
@@ -532,16 +577,23 @@ class _Notes extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: AppTheme.subtleBackground,
-        border: Border.all(color: AppTheme.stroke),
+        color: context.colors.surfaceMuted,
+        border: Border.all(color: context.colors.border),
         borderRadius: BorderRadius.circular(AppTheme.controlRadius),
       ),
       child: ExpansionTile(
         dense: true,
         tilePadding: const EdgeInsets.symmetric(horizontal: 12),
         childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-        leading: const Icon(Icons.info_outline, size: 16, color: AppTheme.textSecondary),
-        title: Text('Processing notes (${warnings.length})', style: theme.textTheme.titleSmall),
+        leading: Icon(
+          Icons.info_outline,
+          size: 16,
+          color: context.colors.textMuted,
+        ),
+        title: Text(
+          'Processing notes (${warnings.length})',
+          style: theme.textTheme.titleSmall,
+        ),
         children: <Widget>[
           for (final String warning in warnings)
             Align(
@@ -579,109 +631,186 @@ class _TotalBar extends StatelessWidget {
         : 0.0;
     final int outstanding = reviews.outstanding(result);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F6FC),
-        border: Border.all(color: const Color(0xFFCFE2F3)),
-        borderRadius: BorderRadius.circular(AppTheme.controlRadius),
-      ),
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          final bool showBar = constraints.maxWidth >= 520;
-          return Row(
-            children: <Widget>[
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Text(
-                      'Total marks: ${formatMarks(total)} / '
-                      '${formatMarks(result.maximumTotalMarks)}',
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleLarge?.copyWith(fontSize: 18),
-                    ),
-                    if (sections.isNotEmpty)
+    // Frosted: the question list scrolls softly out of view beneath it.
+    return Frosted(
+      tint: context.colors.primarySoft,
+      outline: true,
+      borderColor: context.colors.primaryBorder,
+      radius: AppTheme.controlRadius,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final bool showBar = constraints.maxWidth >= 520;
+            return Row(
+              children: <Widget>[
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
                       Text(
-                        sections
-                            .map((SectionTotal s) => '${s.shortName} '
-                                '${formatMarks(s.awarded)}/${formatMarks(s.maximum)}')
-                            .join('   ·   '),
-                        key: const Key('section-breakdown'),
+                        'Total marks: ${formatMarks(total)} / '
+                        '${formatMarks(result.maximumTotalMarks)}',
                         overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontSize: 18,
+                        ),
                       ),
-                    if (result.standard.isNotEmpty)
-                      Text(
-                        'Marked to: ${result.standard}',
-                        key: const Key('marked-to'),
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
-                      ),
-                    if (reviews.overrideCount > 0 || outstanding > 0)
-                      Text(
-                        <String>[
-                          if (reviews.overrideCount > 0)
-                            '${reviews.overrideCount} changed by you · AI total '
-                                '${formatMarks(result.totalMarks)}',
-                          if (outstanding > 0) '$outstanding still to review',
-                        ].join('   ·   '),
-                        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
-                      ),
-                  ],
-                ),
-              ),
-              if (showBar) ...<Widget>[
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: LinearProgressIndicator(
-                      value: fraction,
-                      minHeight: 6,
-                      backgroundColor: const Color(0xFFDCE9F5),
-                    ),
+                      if (sections.isNotEmpty)
+                        Text(
+                          sections
+                              .map(
+                                (SectionTotal s) =>
+                                    '${s.shortName} '
+                                    '${formatMarks(s.awarded)}/${formatMarks(s.maximum)}',
+                              )
+                              .join('   ·   '),
+                          key: const Key('section-breakdown'),
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      if (result.standard.isNotEmpty)
+                        Text(
+                          'Marked to: ${result.standard}',
+                          key: const Key('marked-to'),
+                          overflow: TextOverflow.ellipsis,
+                          style: context.text.caption,
+                        ),
+                      if (reviews.overrideCount > 0 || outstanding > 0)
+                        Text(
+                          <String>[
+                            if (reviews.overrideCount > 0)
+                              '${reviews.overrideCount} changed by you · AI total '
+                                  '${formatMarks(result.totalMarks)}',
+                            if (outstanding > 0) '$outstanding still to review',
+                          ].join('   ·   '),
+                          style: context.text.caption,
+                        ),
+                    ],
                   ),
                 ),
-              ] else
-                const Spacer(),
-              const SizedBox(width: 16),
-              Text(
-                'Percentage: ${formatPercentage(reviews.finalPercentage(result))}',
-                style: theme.textTheme.titleLarge?.copyWith(fontSize: 18, color: AppTheme.accent),
-              ),
-            ],
-          );
-        },
+                if (showBar) ...<Widget>[
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: fraction,
+                        minHeight: 6,
+                        backgroundColor: context.colors.track,
+                      ),
+                    ),
+                  ),
+                ] else
+                  const Spacer(),
+                const SizedBox(width: 16),
+                Text(
+                  'Percentage: ${formatPercentage(reviews.finalPercentage(result))}',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontSize: 18,
+                    color: context.colors.primary,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 }
 
 class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.icon, required this.message});
+  const _Placeholder({required this.icon, required this.message, this.detail});
 
   final IconData icon;
   final String message;
+  final Widget? detail;
 
   @override
   Widget build(BuildContext context) {
+    final AppColors c = context.colors;
+    final Widget? detail = this.detail;
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(icon, size: 28, color: AppTheme.textDisabled),
-          const SizedBox(height: 10),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: AppTheme.textSecondary),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: c.surfaceMuted,
+                  border: Border.all(color: c.border),
+                  borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+                ),
+                child: Icon(icon, size: 22, color: c.textMuted),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: context.text.titleSmall.copyWith(fontSize: 14),
+              ),
+              if (detail != null) ...<Widget>[
+                const SizedBox(height: 14),
+                detail,
+              ],
+            ],
           ),
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A row rising into place: a 6 px lift and a fade, each row 30 ms after the
+/// one above it.
+class _Enter extends StatefulWidget {
+  const _Enter({required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  @override
+  State<_Enter> createState() => _EnterState();
+}
+
+class _EnterState extends State<_Enter> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: Duration(milliseconds: 220 + widget.index * 30),
+  )..forward();
+  late final Animation<double> _t = CurvedAnimation(
+    parent: _c,
+    curve: Interval(
+      widget.index * 30 / (220 + widget.index * 30),
+      1,
+      curve: Curves.easeOut,
+    ),
+  );
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _t,
+      child: AnimatedBuilder(
+        animation: _t,
+        child: widget.child,
+        builder: (BuildContext context, Widget? child) => Transform.translate(
+          offset: Offset(0, 6 * (1 - _t.value)),
+          child: child,
+        ),
       ),
     );
   }

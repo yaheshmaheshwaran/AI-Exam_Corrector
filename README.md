@@ -1,4 +1,4 @@
-# Exam Corrector
+# Marklume
 
 A Flutter **Windows desktop** application that understands a student's
 handwritten exam script — its answers, diagrams, graphs, tables and equations —
@@ -53,6 +53,55 @@ Two other sources work, in this order of precedence:
 | `.env` beside the executable, or at the project root while developing | Development, or shipping a preconfigured folder. Copy `.env.example` to `.env`. |
 
 The key is never hard-coded, and `.env` is git-ignored.
+
+### The college server (accounts and published results)
+
+Accounts, colleges and the results students see live on a
+[Supabase](https://supabase.com) project the college owns. Without one, a
+teacher can still mark on their own computer ("Mark without an account").
+
+1. **Create the project.** Sign up at supabase.com, then *New project* (the free
+   tier is enough to start). Pick a region near the college.
+2. **Set it up for Marklume.** In the dashboard open *SQL Editor → New query*,
+   paste the whole of [`supabase/setup.sql`](supabase/setup.sql) and press
+   *Run*. It creates the tables, the rules that decide who can see what, the
+   sign-up checks and the private `answer-sheets` storage bucket. Running it
+   again is safe.
+3. **Sign-in settings** (*Authentication → Sign In / Providers → Email*):
+   - Minimum password length **8**.
+   - **Confirm email**: either turn it **off** (simplest for a college that
+     shares its college ID only with its own people), or keep it on and change
+     the *Confirm signup* email template (*Authentication → Emails*) to show the
+     code, `{{ .Token }}` — people type that 6-digit code into Marklume; there is
+     no link back into a desktop app.
+   - Supabase's built-in email sender allows only a few emails an hour; for a
+     whole class signing up, add your own SMTP server (*Authentication → Emails
+     → SMTP Settings*) or turn confirmation off.
+4. **Connect Marklume.** Copy the *Project URL* and the **anon / public** key
+   from *Project Settings → API*. In Marklume choose **Connect…** on the
+   sign-in screen, paste both, press *Test connection*, then *Save*. They are
+   saved per user in `settings.json`; `SUPABASE_URL` and `SUPABASE_ANON_KEY`
+   environment variables (or `--dart-define` at build time) override them, so a
+   college can ship a build that is already connected.
+
+Never put the **service_role** key in the app: the anon key is public by
+design, and everything anyone may see or change is decided by the rules in
+`setup.sql`.
+
+To start over with test data, run [`supabase/reset_data.sql`](supabase/reset_data.sql)
+in the SQL Editor: it deletes every row and every account but keeps the set-up.
+Empty the `answer-sheets` bucket from *Storage* as well.
+
+**Who does what**
+
+| Role | Signs up with | Can |
+| --- | --- | --- |
+| College admin | "New college": college name + a college ID they choose | Approve, turn down, remove and restore teachers; everything a teacher can |
+| Teacher | The college ID, a staff ID | Waits for the admin's approval, then marks and publishes; removes or restores students |
+| Student | The college ID, their roll number | Is in at once; sees only results published to their roll number, asks for corrections, verifies marks |
+
+Everyone signs in with their email or username. The admin shares the college
+ID (shown under *College and members* in the account menu).
 
 ## Run
 
@@ -365,6 +414,9 @@ through the uncertainty path, and vision-analysed pages detect them), and that
 a scanned question paper needs the vision model.
 
 ## Note on dependencies
+
+`supabase` (pure Dart, no platform plugins) talks to the college server:
+sign-in, the results tables and the answer-sheet images.
 
 `syncfusion_flutter_pdf` provides pure-Dart PDF text extraction on Windows. It
 is distributed under the Syncfusion Community License, which is free for

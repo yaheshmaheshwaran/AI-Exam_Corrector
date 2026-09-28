@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/widgets/ui/app_dialog.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/geometry.dart';
@@ -63,8 +67,8 @@ class QuestionAnswerView extends StatelessWidget {
           key: ValueKey<String>('answer-text-${question.questionId}'),
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: AppTheme.pageBackground,
-            border: Border.all(color: AppTheme.stroke),
+            color: context.colors.surfaceMuted,
+            border: Border.all(color: context.colors.border),
             borderRadius: BorderRadius.circular(AppTheme.controlRadius),
           ),
           child: SelectableText(
@@ -74,7 +78,7 @@ class QuestionAnswerView extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         if (pages.isEmpty)
-          Text(notKept, style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary))
+          Text(notKept, style: context.text.caption)
         else if (on.isNotEmpty) ...<Widget>[
           Text(
             'Written on page${on.length == 1 ? '' : 's'} ${on.map((PublishedPage p) => p.number).join(', ')}'
@@ -102,7 +106,7 @@ class QuestionAnswerView extends StatelessWidget {
 
 /// A page, large, with zoom.
 Future<void> showPage(BuildContext context, PublishedPage page, {List<NormalizedBox> highlight = const <NormalizedBox>[]}) =>
-    showDialog<void>(
+    showAppDialog<void>(
       context: context,
       builder: (BuildContext context) => Dialog(
         insetPadding: const EdgeInsets.all(24),

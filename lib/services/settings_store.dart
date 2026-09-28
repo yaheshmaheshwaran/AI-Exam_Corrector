@@ -30,6 +30,21 @@ class SettingsStore {
   static const String visualAnalysisField = 'EXAM_CORRECTOR_VISUAL_ANALYSIS';
   static const String developerModeField = 'EXAM_CORRECTOR_DEBUG';
 
+  // Appearance: system, light or dark.
+  static const String themeField = 'EXAM_CORRECTOR_THEME';
+
+  // Click sounds on controls: on unless turned off.
+  static const String soundsField = 'EXAM_CORRECTOR_SOUNDS';
+
+  // Frosted surfaces: how clear, from 0 (solid) to 1. Older versions saved
+  // 'true' or 'false'.
+  static const String transparencyField = 'EXAM_CORRECTOR_TRANSPARENCY';
+
+  // The college server: where accounts and published results live. The URL
+  // and public key of a Supabase project, entered once on this computer.
+  static const String supabaseUrlField = 'SUPABASE_URL';
+  static const String supabaseAnonKeyField = 'SUPABASE_ANON_KEY';
+
   /// Returns the stored values, or an empty map when nothing is saved yet.
   Future<Map<String, String>> read() async {
     final File? file = _file;
@@ -66,6 +81,11 @@ class SettingsStore {
     double? reviewThreshold,
     bool? visualAnalysis,
     bool? developerMode,
+    String? theme,
+    bool? sounds,
+    double? transparency,
+    String? supabaseUrl,
+    String? supabaseAnonKey,
   }) async {
     final Map<String, String> values = Map<String, String>.from(await read());
 
@@ -103,6 +123,14 @@ class SettingsStore {
     }
     if (visualAnalysis != null) values[visualAnalysisField] = '$visualAnalysis';
     if (developerMode != null) values[developerModeField] = '$developerMode';
+    put(themeField, theme);
+    if (sounds != null) values[soundsField] = '$sounds';
+    if (transparency != null) {
+      values[transparencyField] = transparency.toStringAsFixed(2);
+    }
+
+    put(supabaseUrlField, supabaseUrl);
+    put(supabaseAnonKeyField, supabaseAnonKey);
 
     final File? file = _file;
     if (file == null) return;

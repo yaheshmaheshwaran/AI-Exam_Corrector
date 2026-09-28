@@ -61,6 +61,26 @@ class FilePickerService {
     return file?.path;
   }
 
+  /// The teacher's own answer key, typed: a PDF with text, a Word document,
+  /// or a text file.
+  Future<String?> pickAnswerKey() async {
+    final XFile? file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'Answer key',
+          extensions: <String>['pdf', 'docx', 'txt', 'md'],
+          uniformTypeIdentifiers: <String>[
+            'com.adobe.pdf',
+            'org.openxmlformats.wordprocessingml.document',
+            'public.plain-text',
+          ],
+        ),
+      ],
+      confirmButtonText: 'Select',
+    );
+    return file?.path;
+  }
+
   /// Marking guidance saved as a file: text, Markdown or a PDF.
   Future<String?> pickGuidance() async {
     final XFile? file = await openFile(

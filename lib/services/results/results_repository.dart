@@ -77,6 +77,24 @@ abstract class ResultsRepository {
   void close();
 }
 
+/// Knows which roll numbers belong to students who have signed up — the
+/// college server does; a database on this computer does not.
+abstract interface class StudentDirectory {
+  Future<Set<String>> registeredRolls();
+}
+
+/// Whether republishing [b] over [a] leaves every mark as it was — when it
+/// does, what the student has seen and agreed to still stands.
+bool sameMarks(PublishedResult a, PublishedResult b) {
+  if ((a.total - b.total).abs() > 1e-9) return false;
+  final Map<String, double> marks = <String, double>{
+    for (final PublishedQuestion q in a.questions) q.questionId: q.marks,
+  };
+  return b.questions.length == a.questions.length &&
+      b.questions.every((PublishedQuestion q) =>
+          marks.containsKey(q.questionId) && (marks[q.questionId]! - q.marks).abs() < 1e-9);
+}
+
 /// The results database: SQLite, in one file on this computer.
 class SqliteResultsRepository implements ResultsRepository {
   SqliteResultsRepository._(this._db, this._answerSheets) {
@@ -264,7 +282,7 @@ class SqliteResultsRepository implements ResultsRepository {
       <Object?>[result.rollNo, result.subjectCode, result.exam],
     );
     final PublishedResult? before = earlier.isEmpty ? null : await this.result('${earlier.first['id']}');
-    final bool sameMarks = before != null && _sameMarks(before, result);
+    final bool unchanged = before != null && sameMarks(before, result);
 
     final int id = _transaction(() {
       final ResultSet existing = _db.select(
@@ -303,7 +321,7 @@ class SqliteResultsRepository implements ResultsRepository {
         );
         _db.execute('DELETE FROM result_sections WHERE result_id = ?', <Object?>[id]);
         _db.execute('DELETE FROM result_questions WHERE result_id = ?', <Object?>[id]);
-        if (!sameMarks) {
+        if (!unchanged) {
           _db.execute(
             'UPDATE results SET first_seen_at = NULL, last_seen_at = NULL, seen_count = 0, '
             'verified_at = NULL WHERE id = ?',
@@ -348,16 +366,6 @@ class SqliteResultsRepository implements ResultsRepository {
       }
     });
     return (await this.result('$id'))!;
-  }
-
-  static bool _sameMarks(PublishedResult a, PublishedResult b) {
-    if ((a.total - b.total).abs() > 1e-9) return false;
-    final Map<String, double> marks = <String, double>{
-      for (final PublishedQuestion q in a.questions) q.questionId: q.marks,
-    };
-    return b.questions.length == a.questions.length &&
-        b.questions.every((PublishedQuestion q) =>
-            marks.containsKey(q.questionId) && (marks[q.questionId]! - q.marks).abs() < 1e-9);
   }
 
   static DateTime? _date(Object? value) =>

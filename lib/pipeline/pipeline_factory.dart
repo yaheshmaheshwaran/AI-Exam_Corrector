@@ -15,6 +15,7 @@ import 'package:exam_corrector/pipeline/layout/sidecar_region_cropper.dart';
 import 'package:exam_corrector/pipeline/layout/text_layer_region_detector.dart';
 import 'package:exam_corrector/pipeline/layout/vision_region_detector.dart';
 import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/pipeline/marking/teacher_key_reader.dart';
 import 'package:exam_corrector/pipeline/marking/model_marking_engine.dart';
 import 'package:exam_corrector/pipeline/questions/model_question_paper_extractor.dart';
 import 'package:exam_corrector/pipeline/questions/question_paper_parser.dart';
@@ -111,6 +112,11 @@ class PipelineFactory {
       marker: marker ?? ModelMarkingEngine(models, config),
       // A stand-in marker spends no quota, so neither does the key.
       answerKeys: marker == null && models.isAvailable ? ModelAnswerKeyEngine(models, config) : null,
+      // The teacher's own key is read locally first; the model only helps
+      // match one that follows no pattern.
+      teacherKeys: CompositeTeacherKeyReader(
+        model: marker == null && models.isAvailable ? ModelTeacherKeyReader(models, config) : null,
+      ),
     );
   }
 }

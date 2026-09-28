@@ -1,6 +1,11 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+#include <mmsystem.h>
+
 #include <optional>
+
+#pragma comment(lib, "winmm.lib")
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -27,6 +32,39 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // Dart hands over the sounds once ("load", name to bytes), then asks for
+  // one by name ("play"). A new sound replaces one still playing.
+  sound_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "exam_corrector/sound",
+      &flutter::StandardMethodCodec::GetInstance());
+  sound_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() == "load") {
+          if (const auto* map = std::get_if<flutter::EncodableMap>(call.arguments())) {
+            PlaySound(nullptr, nullptr, 0);  // Nothing may still read the old bytes.
+            sounds_.clear();
+            for (const auto& [key, value] : *map) {
+              const auto* name = std::get_if<std::string>(&key);
+              const auto* bytes = std::get_if<std::vector<uint8_t>>(&value);
+              if (name && bytes) sounds_[*name] = *bytes;
+            }
+          }
+          result->Success();
+        } else if (call.method_name() == "play") {
+          if (const auto* name = std::get_if<std::string>(call.arguments())) {
+            auto found = sounds_.find(*name);
+            if (found != sounds_.end() && !found->second.empty()) {
+              PlaySound(reinterpret_cast<LPCWSTR>(found->second.data()), nullptr,
+                        SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+            }
+          }
+          result->Success();
+        } else {
+          result->NotImplemented();
+        }
+      });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -40,6 +78,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  PlaySound(nullptr, nullptr, 0);
+  sound_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

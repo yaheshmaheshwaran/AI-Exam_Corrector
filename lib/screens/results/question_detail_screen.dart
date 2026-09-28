@@ -1,9 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
+import 'package:exam_corrector/services/ui_sound.dart';
+
+import 'package:exam_corrector/app/press_feedback.dart';
 import 'package:flutter/services.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
+import 'package:exam_corrector/widgets/ui/ui.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/evidence.dart';
@@ -15,6 +19,7 @@ import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/domain/student_answer.dart';
 import 'package:exam_corrector/domain/teacher_review.dart';
 import 'package:exam_corrector/models/question_result.dart';
+import 'package:exam_corrector/pipeline/marking/teacher_key.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 import 'package:exam_corrector/widgets/page_viewer.dart';
 import 'package:exam_corrector/widgets/results_view.dart';
@@ -175,9 +180,9 @@ class _Header extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      decoration: const BoxDecoration(
-        color: AppTheme.cardBackground,
-        border: Border(bottom: BorderSide(color: AppTheme.stroke)),
+      decoration: BoxDecoration(
+        color: context.colors.surface,
+        border: Border(bottom: BorderSide(color: context.colors.border)),
       ),
       child: Row(
         children: <Widget>[
@@ -191,7 +196,7 @@ class _Header extends StatelessWidget {
           if (question.sectionId != null) ...<Widget>[
             const SizedBox(width: 10),
             Text('Section ${question.sectionId}',
-                style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+                style: context.text.caption),
           ],
           const Spacer(),
           if (marked != null) ...<Widget>[
@@ -200,24 +205,18 @@ class _Header extends StatelessWidget {
                 padding: const EdgeInsets.only(right: 10),
                 child: Text(
                   'AI ${formatMarks(marked!.awardedMarks)} → yours',
-                  style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.accent),
+                  style: theme.textTheme.bodySmall?.copyWith(color: context.colors.primary),
                 ),
               ),
             if (marked!.needsReview && review == null)
               const Padding(
                 padding: EdgeInsets.only(right: 10),
-                child: Row(
-                  children: <Widget>[
-                    Icon(Icons.flag_outlined, size: 15, color: AppTheme.caution),
-                    SizedBox(width: 4),
-                    Text('Needs your review', style: TextStyle(color: AppTheme.caution, fontSize: 12.5)),
-                  ],
-                ),
+                child: StatusPill(label: 'Needs your review', icon: Icons.flag_outlined, tone: ToneKind.warning),
               ),
             MarksBadge(
               awarded: finalMarks!,
               maximum: marked!.maximumMarks,
-              gold: marked!.syllabusBadge != SyllabusBadge.none,
+              bonus: marked!.syllabusBadge != SyllabusBadge.none,
             ),
           ] else
             Text('Not marked', style: theme.textTheme.bodySmall),
@@ -273,7 +272,7 @@ class _EvidenceColumn extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        _Panel(
+        AppCard(
           title: 'Question',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -288,19 +287,19 @@ class _EvidenceColumn extends StatelessWidget {
                     ? 'No marks are printed for this question.'
                     : 'Maximum marks: ${formatMarks(question.maximumMarks!)}'
                         '${question.marksStated ? '' : ' (inferred)'}',
-                style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                style: context.text.caption,
               ),
               if (marked?.syllabusReference case final String unit when unit.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 6),
                 Row(
                   children: <Widget>[
-                    const Icon(Icons.menu_book_outlined, size: 15, color: AppTheme.textSecondary),
+                    Icon(Icons.menu_book_outlined, size: 15, color: context.colors.textMuted),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         'Syllabus: $unit${assessment.syllabus == null ? '' : ' · ${assessment.syllabus!.name}'}'
                         ' — marked against what this course teaches here',
-                        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                        style: context.text.caption,
                       ),
                     ),
                   ],
@@ -311,7 +310,7 @@ class _EvidenceColumn extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    const Icon(Icons.alt_route, size: 15, color: AppTheme.textSecondary),
+                    Icon(Icons.alt_route, size: 15, color: context.colors.textMuted),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
@@ -319,7 +318,7 @@ class _EvidenceColumn extends StatelessWidget {
                         '${assessment.questionPaper.describeChoice(first.choice)}.'
                         '${marked?.choiceNote.isNotEmpty ?? false ? ' ${marked!.choiceNote}' : ''}',
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: marked?.counted ?? true ? AppTheme.textSecondary : AppTheme.caution,
+                          color: marked?.counted ?? true ? context.colors.textMuted : context.colors.warning,
                         ),
                       ),
                     ),
@@ -332,14 +331,23 @@ class _EvidenceColumn extends StatelessWidget {
         if (assessment.questionPaper.markSchemeFor(question) case final String scheme
             when scheme.isNotEmpty) ...<Widget>[
           const SizedBox(height: AppTheme.gap),
-          _Panel(
+          AppCard(
             title: 'Mark scheme',
             subtitle: 'Printed on the question paper',
             child: SelectableText(scheme, style: theme.textTheme.bodyMedium),
           ),
+        ] else if (controller.teacherKey?.entries[question.questionId] case final TeacherKeyEntry own
+            when !own.isEmpty) ...<Widget>[
+          const SizedBox(height: AppTheme.gap),
+          AppCard(
+            key: const Key('your-answer-key'),
+            title: 'Your answer key',
+            subtitle: controller.teacherKey!.fileName,
+            child: SelectableText(own.text, style: theme.textTheme.bodyMedium),
+          ),
         ],
         const SizedBox(height: AppTheme.gap),
-        _Panel(
+        AppCard(
           title: 'Student answer',
           subtitle: answer.isEmpty
               ? null
@@ -351,7 +359,7 @@ class _EvidenceColumn extends StatelessWidget {
               if (answer.isEmpty)
                 Text(
                   'No answer to this question was found on the answer sheet.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
+                  style: context.text.muted,
                 )
               else
                 for (final String regionId in answer.regionIds)
@@ -377,7 +385,7 @@ class _EvidenceColumn extends StatelessWidget {
         ),
         if (answer.crossedOut.isNotEmpty) ...<Widget>[
           const SizedBox(height: AppTheme.gap),
-          _Panel(
+          AppCard(
             title: 'Crossed out',
             subtitle: 'Not part of the final answer. Shown so you can check it.',
             child: Column(
@@ -398,7 +406,7 @@ class _EvidenceColumn extends StatelessWidget {
         ],
         if (marked != null && marked!.interpretedReadings.isNotEmpty) ...<Widget>[
           const SizedBox(height: AppTheme.gap),
-          _Panel(
+          AppCard(
             title: 'Read in context',
             subtitle: 'Where the marking relied on interpreting unclear writing. '
                 'The raw transcription above is unchanged.',
@@ -412,7 +420,7 @@ class _EvidenceColumn extends StatelessWidget {
                       TextSpan(children: <InlineSpan>[
                         TextSpan(
                           text: '“${reading.raw}”',
-                          style: const TextStyle(color: AppTheme.textSecondary),
+                          style: TextStyle(color: context.colors.textMuted),
                         ),
                         const TextSpan(text: '  →  '),
                         TextSpan(
@@ -421,7 +429,7 @@ class _EvidenceColumn extends StatelessWidget {
                         ),
                         TextSpan(
                           text: '   (${reading.basis.name})',
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                          style: context.text.caption,
                         ),
                       ]),
                     ),
@@ -432,7 +440,7 @@ class _EvidenceColumn extends StatelessWidget {
         ],
         if (answer.flags.isNotEmpty) ...<Widget>[
           const SizedBox(height: AppTheme.gap),
-          _Panel(
+          AppCard(
             title: 'About this answer',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -477,7 +485,7 @@ class _RegionEvidence extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        border: Border.all(color: AppTheme.stroke),
+        border: Border.all(color: context.colors.border),
         borderRadius: BorderRadius.circular(AppTheme.controlRadius),
       ),
       child: Column(
@@ -485,7 +493,7 @@ class _RegionEvidence extends StatelessWidget {
         children: <Widget>[
           Container(
             padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
-            color: AppTheme.subtleBackground,
+            color: context.colors.surfaceMuted,
             child: Row(
               children: <Widget>[
                 Container(width: 8, height: 8, color: regionColor(region.type)),
@@ -528,9 +536,12 @@ class _RegionEvidence extends StatelessWidget {
                   File(region.cropPath!),
                   fit: BoxFit.contain,
                   cacheWidth: 1400,
-                  errorBuilder: (_, _, _) => const Text(
+                  // A skeleton line holds the place until the crop decodes.
+                  frameBuilder: (BuildContext context, Widget child, int? frame, bool sync) =>
+                      sync || frame != null ? child : const SizedBox(height: 60, child: SkeletonImage()),
+                  errorBuilder: (_, _, _) => Text(
                     'The image of this region is missing.',
-                    style: TextStyle(color: AppTheme.textDisabled, fontSize: 12),
+                    style: context.text.faint,
                   ),
                 ),
               ),
@@ -576,7 +587,7 @@ class _RecognizedText extends StatelessWidget {
         SelectableText.rich(
           TextSpan(
             style: theme.textTheme.bodyMedium,
-            children: _spans(item.text, corrected ? const <UncertainSpan>[] : item.uncertainSpans),
+            children: _spans(item.text, corrected ? const <UncertainSpan>[] : item.uncertainSpans, context.colors.highlight),
           ),
         ),
         if (corrected)
@@ -584,7 +595,7 @@ class _RecognizedText extends StatelessWidget {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               'Machine reading: ${item.rawText}',
-              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+              style: context.text.caption,
             ),
           ),
         if (item.alternativeReading != null)
@@ -592,7 +603,7 @@ class _RecognizedText extends StatelessWidget {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               'A second recogniser read: ${item.alternativeReading}',
-              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution),
+              style: theme.textTheme.bodySmall?.copyWith(color: context.colors.warning),
             ),
           ),
         if (editable)
@@ -618,7 +629,7 @@ class _RecognizedText extends StatelessWidget {
     );
   }
 
-  static List<InlineSpan> _spans(String text, List<UncertainSpan> spans) {
+  static List<InlineSpan> _spans(String text, List<UncertainSpan> spans, Color highlight) {
     final List<UncertainSpan> located = <UncertainSpan>[
       for (final UncertainSpan span in spans)
         if (span.start != null &&
@@ -636,7 +647,7 @@ class _RecognizedText extends StatelessWidget {
       out.add(TextSpan(text: text.substring(cursor, span.start)));
       out.add(TextSpan(
         text: text.substring(span.start!, span.end),
-        style: const TextStyle(backgroundColor: Color(0xFFFFE58F)),
+        style: TextStyle(backgroundColor: highlight),
       ));
       cursor = span.end!;
     }
@@ -645,7 +656,7 @@ class _RecognizedText extends StatelessWidget {
   }
 
   Future<void> _edit(BuildContext context) async {
-    final String? corrected = await showDialog<String>(
+    final String? corrected = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) => _TranscriptionDialog(initial: item.text),
     );
@@ -729,7 +740,7 @@ class _VisualDetails extends StatelessWidget {
         evidence?.error == null
             ? 'Not analysed. The marker judged it from the image.'
             : 'Not analysed (${evidence!.error}). The marker judged it from the image.',
-        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution),
+        style: theme.textTheme.bodySmall?.copyWith(color: context.colors.warning),
       );
     }
 
@@ -771,7 +782,7 @@ class _VisualDetails extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Table(
-                      border: TableBorder.all(color: AppTheme.stroke),
+                      border: TableBorder.all(color: context.colors.border),
                       defaultColumnWidth: const IntrinsicColumnWidth(),
                       children: <TableRow>[
                         for (final List<String> row in _rectangular(evidence.rows))
@@ -826,7 +837,7 @@ class _MarkingColumn extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final QuestionResult? result = marked;
     if (result == null) {
-      return const _Panel(
+      return const AppCard(
         title: 'Marking',
         child: Text('This question has not been marked yet.'),
       );
@@ -836,11 +847,11 @@ class _MarkingColumn extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         if (result.syllabusAward case final SyllabusAward award) ...<Widget>[
-          _Panel(
+          AppCard(
             key: const Key('syllabus-match-panel'),
             title: 'Syllabus match',
             subtitle: award.summary,
-            gold: true,
+            tone: ToneKind.bonus,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
@@ -855,17 +866,17 @@ class _MarkingColumn extends StatelessWidget {
                   ),
                 if (award.matched.isNotEmpty)
                   Text('Covered: ${award.matched.join(', ')}',
-                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.gold)),
+                      style: theme.textTheme.bodySmall?.copyWith(color: context.colors.bonus)),
                 if (award.missing.isNotEmpty)
                   Text('Not covered: ${award.missing.join(', ')}',
-                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+                      style: context.text.caption),
               ],
             ),
           ),
           const SizedBox(height: AppTheme.gap),
         ],
         if (result.adjustments.isNotEmpty) ...<Widget>[
-          _Panel(
+          AppCard(
             title: 'Marking standard',
             subtitle: 'The AI marked ${formatMarks(result.aiRawMarks ?? result.awardedMarks)}; '
                 'the paper’s standard changed it:',
@@ -878,7 +889,7 @@ class _MarkingColumn extends StatelessWidget {
                     child: Text(
                       '•  $adjustment',
                       style: adjustment.contains('syllabus bonus')
-                          ? theme.textTheme.bodySmall?.copyWith(color: AppTheme.gold, fontWeight: FontWeight.w600)
+                          ? theme.textTheme.bodySmall?.copyWith(color: context.colors.bonus, fontWeight: FontWeight.w600)
                           : theme.textTheme.bodySmall,
                     ),
                   ),
@@ -892,8 +903,8 @@ class _MarkingColumn extends StatelessWidget {
             key: const Key('quality-band'),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: AppTheme.subtleBackground,
-              border: Border.all(color: AppTheme.stroke),
+              color: context.colors.surfaceMuted,
+              border: Border.all(color: context.colors.border),
               borderRadius: BorderRadius.circular(AppTheme.cardRadius),
             ),
             child: Text.rich(
@@ -908,15 +919,17 @@ class _MarkingColumn extends StatelessWidget {
           ),
           const SizedBox(height: AppTheme.gap),
         ],
-        _Panel(
+        AppCard(
           title: 'Marking points',
           subtitle: switch (result.markingPointsSource) {
             MarkingPointSource.teacherGuidance => 'From your marking guidance',
             MarkingPointSource.markScheme =>
               'From the mark scheme on the question paper',
             MarkingPointSource.answerKey =>
-              'From the answer key, fixed before any script was read — '
+              'From the AI\'s answer key, fixed before any script was read — '
                   'open Answer key to change it',
+            MarkingPointSource.teacherKey =>
+              'From your answer key — open Answer key to change it',
             MarkingPointSource.inferred =>
               'Inferred by the AI from the question — check that they are the '
                   'points you would reward',
@@ -931,12 +944,12 @@ class _MarkingColumn extends StatelessWidget {
                 ),
         ),
         const SizedBox(height: AppTheme.gap),
-        _Panel(
+        AppCard(
           title: 'Reason',
           child: SelectableText(result.evaluation, style: theme.textTheme.bodyMedium),
         ),
         const SizedBox(height: AppTheme.gap),
-        _Panel(
+        AppCard(
           title: 'Confidence: ${(result.confidence * 100).round()}%',
           subtitle: result.model.isEmpty ? null : 'Marked by ${result.model}',
           child: result.reviewReasons.isEmpty
@@ -952,7 +965,7 @@ class _MarkingColumn extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 2),
                         child: Text(
                           '• $reason',
-                          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution),
+                          style: theme.textTheme.bodySmall?.copyWith(color: context.colors.warning),
                         ),
                       ),
                   ],
@@ -982,7 +995,7 @@ class _PointRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final Color colour = point.satisfied ? AppTheme.success : AppTheme.danger;
+    final Color colour = point.satisfied ? context.colors.success : context.colors.danger;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1015,7 +1028,7 @@ class _PointRow extends StatelessWidget {
                 ),
                 if (point.note.isNotEmpty)
                   Text(point.note,
-                      style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+                      style: context.text.caption),
               ],
             ),
           ),
@@ -1037,12 +1050,12 @@ class _BasisTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (String label, Color colour) = switch (basis) {
-      EvidenceBasis.observed => ('observed', AppTheme.success),
-      EvidenceBasis.inferred => ('inferred from context', AppTheme.caution),
-      EvidenceBasis.uncertain => ('uncertain', AppTheme.danger),
+    final (String label, ToneKind tone) = switch (basis) {
+      EvidenceBasis.observed => ('observed', ToneKind.success),
+      EvidenceBasis.inferred => ('inferred from context', ToneKind.warning),
+      EvidenceBasis.uncertain => ('uncertain', ToneKind.danger),
     };
-    return Text(label, style: TextStyle(fontSize: 11.5, color: colour));
+    return Text(label, style: context.text.caption.copyWith(color: context.colors.tone(tone).foreground));
   }
 }
 
@@ -1066,7 +1079,7 @@ class _EvidenceChip extends StatelessWidget {
       avatar: Icon(Icons.crop_free, size: 12, color: regionColor(region.type)),
       label: Text(
         'Page ${region.pageNumber} → Region ${region.readingOrder + 1}',
-        style: const TextStyle(fontSize: 11.5),
+        style: context.text.caption.copyWith(color: context.colors.text),
       ),
       onPressed: () => showRegionOnPage(context, page: page, region: region),
     );
@@ -1127,7 +1140,6 @@ class _TeacherReviewPanelState extends State<TeacherReviewPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
     final TeacherReview? review = widget.review;
     final String status = switch (review?.status) {
       ReviewStatus.accepted => 'You accepted the AI mark.',
@@ -1136,7 +1148,7 @@ class _TeacherReviewPanelState extends State<TeacherReviewPanel> {
       _ => 'Not reviewed yet.',
     };
 
-    return _Panel(
+    return AppCard(
       title: 'Your review',
       subtitle: status,
       child: Column(
@@ -1165,7 +1177,7 @@ class _TeacherReviewPanelState extends State<TeacherReviewPanel> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(_error!, style: const TextStyle(color: AppTheme.danger, fontSize: 12)),
+              child: Text(_error!, style: context.text.caption.copyWith(color: context.colors.danger)),
             ),
           const SizedBox(height: 8),
           TextField(
@@ -1204,7 +1216,7 @@ class _TeacherReviewPanelState extends State<TeacherReviewPanel> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(
                 'Recorded ${review.timestamp.toLocal().toString().substring(0, 16)}',
-                style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                style: context.text.caption,
               ),
             ),
         ],
@@ -1230,7 +1242,7 @@ class _ChooseAnswerBar extends StatelessWidget {
   final CorrectionController controller;
 
   Future<void> _choose(BuildContext context) async {
-    final List<String>? chosen = await showDialog<List<String>>(
+    final List<String>? chosen = await showAppDialog<List<String>>(
       context: context,
       builder: (BuildContext context) => _ChooseAnswerDialog(
         assessment: assessment,
@@ -1274,7 +1286,7 @@ class _ChooseAnswerBar extends StatelessWidget {
             Text(
               'You chose $chosen piece${chosen == 1 ? '' : 's'} of writing for this answer'
               '${controller.hasPendingCorrections ? ' — re-mark to apply.' : '.'}',
-              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.accent),
+              style: theme.textTheme.bodySmall?.copyWith(color: context.colors.primary),
             ),
             TextButton(
               onPressed: busy ? null : () => controller.clearAssignments(questionId),
@@ -1376,15 +1388,15 @@ class _ChooseAnswerDialogState extends State<_ChooseAnswerDialog> {
 
   Widget _tile(PageRegion region) {
     final String id = region.regionId;
-    return CheckboxListTile(
+    return ToggleRow(child: CheckboxListTile(
       key: ValueKey<String>('choose-$id'),
       dense: true,
       value: _selected.contains(id),
       controlAffinity: ListTileControlAffinity.leading,
-      onChanged: (bool? on) => setState(() => on ?? false ? _selected.add(id) : _selected.remove(id)),
+      onChanged: toggled((bool? on) => setState(() => on ?? false ? _selected.add(id) : _selected.remove(id))),
       title: Text(_preview(region), maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: Text('Page ${region.pageNumber} · ${_where(region)}'),
-    );
+    ));
   }
 
   @override
@@ -1401,7 +1413,7 @@ class _ChooseAnswerDialogState extends State<_ChooseAnswerDialog> {
             Text(
               'Tick the writing that answers this question. It is taken away from '
               'wherever the app put it, and used the next time you re-mark.',
-              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+              style: context.text.caption,
             ),
             if (_unmatched.isNotEmpty) ...<Widget>[
               const SizedBox(height: 10),
@@ -1429,40 +1441,3 @@ class _ChooseAnswerDialogState extends State<_ChooseAnswerDialog> {
   }
 }
 
-class _Panel extends StatelessWidget {
-  const _Panel({super.key, required this.title, required this.child, this.subtitle, this.gold = false});
-
-  /// A gold frame and title, for the syllabus bonus.
-  final bool gold;
-
-  final String title;
-  final String? subtitle;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: gold ? AppTheme.goldFill : AppTheme.cardBackground,
-        border: Border.all(color: gold ? AppTheme.gold.withValues(alpha: 0.5) : AppTheme.stroke),
-        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(title, style: gold ? theme.textTheme.titleMedium?.copyWith(color: AppTheme.gold) : theme.textTheme.titleMedium),
-          if (subtitle != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(subtitle!,
-                  style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
-            ),
-          const SizedBox(height: 10),
-          child,
-        ],
-      ),
-    );
-  }
-}

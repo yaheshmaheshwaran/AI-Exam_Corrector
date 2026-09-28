@@ -1,31 +1,41 @@
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
+import 'package:exam_corrector/models/account.dart';
 import 'package:exam_corrector/models/correction_request.dart';
 import 'package:exam_corrector/models/published_result.dart';
 import 'package:exam_corrector/services/results/results_repository.dart';
 import 'package:exam_corrector/widgets/answer_view.dart';
 import 'package:exam_corrector/widgets/syllabus_badge.dart';
 import 'package:exam_corrector/widgets/text_prompt_dialog.dart';
+import 'package:exam_corrector/widgets/ui/ui.dart';
 
-/// What a student sees: their published results for a subject, found by
-/// roll number and subject code — and a way to ask the teacher to look again
-/// at a mark. Nothing else can be changed from here.
+/// What a student sees: the results published to their roll number, every
+/// subject or one — and a way to ask the teacher to look again at a mark.
+/// Nothing else can be changed from here.
 class StudentScreen extends StatefulWidget {
-  const StudentScreen({super.key, required this.results, required this.onSwitchRole});
+  const StudentScreen({
+    super.key,
+    required this.results,
+    required this.rollNo,
+    required this.onSwitchRole,
+    this.account,
+  });
 
   final ResultsRepository? results;
+
+  /// The signed-in student's roll number: the only results they see.
+  final String rollNo;
   final VoidCallback onSwitchRole;
+  final Account? account;
 
   @override
   State<StudentScreen> createState() => _StudentScreenState();
 }
 
 class _StudentScreenState extends State<StudentScreen> {
-  final TextEditingController _roll = TextEditingController();
   final TextEditingController _subject = TextEditingController();
   List<PublishedResult>? _found;
   List<CorrectionRequest> _requests = const <CorrectionRequest>[];
@@ -33,29 +43,44 @@ class _StudentScreenState extends State<StudentScreen> {
   String _asked = '';
   bool _searching = false;
 
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _search();
+  }
+
   @override
   void dispose() {
-    _roll.dispose();
     _subject.dispose();
     super.dispose();
   }
 
   Future<void> _search() async {
     final ResultsRepository? results = widget.results;
-    final String roll = _roll.text.trim();
+    final String roll = widget.rollNo.trim();
     if (results == null || roll.isEmpty) return;
-    setState(() => _searching = true);
-    final List<PublishedResult> found = await results.resultsFor(rollNo: roll, subjectCode: _subject.text);
-    final List<CorrectionRequest> requests = await results.requests(rollNo: roll, subjectCode: _subject.text);
-    if (!mounted) return;
     setState(() {
-      _searching = false;
-      _found = found;
-      _requests = requests;
-      _asked = '${PublishedResult.normaliseRoll(roll)}'
-          '${_subject.text.trim().isEmpty ? '' : ' in ${PublishedResult.normaliseRoll(_subject.text)}'}';
-      _open = null;
+      _searching = true;
+      _error = null;
     });
+    try {
+      final List<PublishedResult> found = await results.resultsFor(rollNo: roll, subjectCode: _subject.text);
+      final List<CorrectionRequest> requests = await results.requests(rollNo: roll, subjectCode: _subject.text);
+      if (!mounted) return;
+      setState(() {
+        _found = found;
+        _requests = requests;
+        _asked = '${PublishedResult.normaliseRoll(roll)}'
+            '${_subject.text.trim().isEmpty ? '' : ' in ${PublishedResult.normaliseRoll(_subject.text)}'}';
+        _open = null;
+      });
+    } on AppException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
   }
 
   /// Reloads the open result and its requests after a change.
@@ -64,7 +89,7 @@ class _StudentScreenState extends State<StudentScreen> {
     final PublishedResult? open = _open;
     if (results == null) return;
     final PublishedResult? fresh = open == null ? null : await results.result(open.id);
-    final List<CorrectionRequest> requests = await results.requests(rollNo: _roll.text, subjectCode: _subject.text);
+    final List<CorrectionRequest> requests = await results.requests(rollNo: widget.rollNo, subjectCode: _subject.text);
     if (!mounted) return;
     setState(() {
       _open = fresh;
@@ -131,7 +156,7 @@ class _StudentScreenState extends State<StudentScreen> {
   Future<void> _verify(PublishedResult result) async {
     final ResultsRepository? results = widget.results;
     if (results == null) return;
-    final bool? sure = await showDialog<bool>(
+    final bool? sure = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: const Text('Verify my marks'),
@@ -173,21 +198,29 @@ class _StudentScreenState extends State<StudentScreen> {
           Container(
             height: 48,
             padding: const EdgeInsets.symmetric(horizontal: AppTheme.pagePadding),
-            decoration: const BoxDecoration(
-              color: AppTheme.cardBackground,
-              border: Border(bottom: BorderSide(color: AppTheme.stroke)),
+            decoration: BoxDecoration(
+              color: context.colors.surface,
+              border: Border(bottom: BorderSide(color: context.colors.border)),
             ),
             child: Row(
               children: <Widget>[
-                const Icon(Icons.school_outlined, size: 18, color: AppTheme.accent),
+                Icon(Icons.school_outlined, size: 18, color: context.colors.primary),
                 const SizedBox(width: 10),
-                Text('Exam Corrector · Student', style: theme.textTheme.titleMedium),
-                const Spacer(),
+                Text('Marklume · Student', style: theme.textTheme.titleMedium),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    _whoAmI(),
+                    key: const Key('student-who'),
+                    overflow: TextOverflow.ellipsis,
+                    style: context.text.caption,
+                  ),
+                ),
                 OutlinedButton.icon(
                   key: const Key('switch-role'),
                   onPressed: widget.onSwitchRole,
                   icon: const Icon(Icons.logout, size: 16),
-                  label: const Text('Switch role'),
+                  label: const Text('Sign out'),
                 ),
               ],
             ),
@@ -213,6 +246,13 @@ class _StudentScreenState extends State<StudentScreen> {
     );
   }
 
+  /// Name, roll number and college, as the header shows them.
+  String _whoAmI() {
+    final Account? account = widget.account;
+    if (account == null) return PublishedResult.normaliseRoll(widget.rollNo);
+    return '${account.fullName} · ${account.memberId} · ${account.college.name}';
+  }
+
   Widget _finder(ThemeData theme) {
     final List<PublishedResult>? found = _found;
     return ListView(
@@ -221,50 +261,42 @@ class _StudentScreenState extends State<StudentScreen> {
         Text('Your marks', style: theme.textTheme.titleLarge),
         const SizedBox(height: 4),
         Text(
-          'Sign in with your roll number and the subject code. Leave the subject empty to see every subject.',
-          style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
+          'Every result published to your roll number. Type a subject code to see one subject.',
+          style: context.text.muted,
         ),
         const SizedBox(height: 12),
         Row(
           children: <Widget>[
             Expanded(
               child: TextField(
-                key: const Key('student-roll'),
-                controller: _roll,
-                onSubmitted: (_) => _search(),
-                decoration: const InputDecoration(
-                  labelText: 'Roll number',
-                  hintText: 'e.g. 21CS045',
-                  prefixIcon: Icon(Icons.badge_outlined, size: 18),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 200,
-              child: TextField(
                 key: const Key('student-subject'),
                 controller: _subject,
                 onSubmitted: (_) => _search(),
-                decoration: const InputDecoration(labelText: 'Subject code', hintText: 'e.g. CCS356'),
+                decoration: const InputDecoration(
+                  labelText: 'Subject code (optional)',
+                  hintText: 'e.g. CCS356',
+                  prefixIcon: Icon(Icons.filter_list, size: 18),
+                ),
               ),
             ),
             const SizedBox(width: 10),
             FilledButton(
               key: const Key('student-search'),
               onPressed: _searching ? null : _search,
-              child: const Text('Show my marks'),
+              child: const Text('Show'),
             ),
           ],
         ),
         const SizedBox(height: 20),
-        if (found != null && found.isEmpty)
+        if (_error != null) InfoBanner(key: const Key('student-error'), title: _error!, tone: ToneKind.danger),
+        if (_searching) const SkeletonRows(count: 3, label: 'Finding your results'),
+        if (!_searching && found != null && found.isEmpty)
           Text(
-            'No results have been published for $_asked yet. Check the roll number and subject code, or ask your teacher.',
+            'No results have been published for $_asked yet. Check the subject code, or ask your teacher.',
             key: const Key('student-none'),
-            style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
+            style: context.text.muted,
           ),
-        if (found != null)
+        if (!_searching && found != null)
           for (final PublishedResult result in found)
             Card(
               margin: const EdgeInsets.only(bottom: 8),
@@ -279,7 +311,7 @@ class _StudentScreenState extends State<StudentScreen> {
                     ' · ${_stateOf(result)}'),
                 trailing: Text(
                   '${formatMarks(result.total)} / ${formatMarks(result.maximum)}  ·  ${formatPercentage(result.percentage)}',
-                  style: theme.textTheme.titleSmall?.copyWith(color: AppTheme.accent),
+                  style: theme.textTheme.titleSmall?.copyWith(color: context.colors.primary),
                 ),
               ),
             ),
@@ -308,7 +340,7 @@ class _ResultView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final TextStyle? muted = theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary);
+    final TextStyle muted = context.text.caption;
 
     return DefaultTabController(
       length: 2,
@@ -332,8 +364,8 @@ class _ResultView extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFF0F6FC),
-                border: Border.all(color: const Color(0xFFCFE2F3)),
+                color: context.colors.primarySoft,
+                border: Border.all(color: context.colors.primaryBorder),
                 borderRadius: BorderRadius.circular(AppTheme.controlRadius),
               ),
               child: Column(
@@ -377,18 +409,21 @@ class _ResultView extends StatelessWidget {
             Expanded(
               child: TabBarView(
                 children: <Widget>[
-                  ListView(
+                  // Each card can open the student's answer, page crops and
+                  // all: built only as it scrolls into view.
+                  ListView.builder(
                     padding: const EdgeInsets.only(top: 10, bottom: AppTheme.pagePadding),
-                    children: <Widget>[
-                      for (final PublishedQuestion question in result.questions)
-                        _QuestionCard(
-                          question: question,
-                          pages: result.pages,
-                          latest: requests.where((CorrectionRequest r) => r.questionId == question.questionId).firstOrNull,
-                          onRequest: () => onRequest(question),
-                          verified: result.isVerified,
-                        ),
-                    ],
+                    itemCount: result.questions.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final PublishedQuestion question = result.questions[index];
+                      return _QuestionCard(
+                        question: question,
+                        pages: result.pages,
+                        latest: requests.where((CorrectionRequest r) => r.questionId == question.questionId).firstOrNull,
+                        onRequest: () => onRequest(question),
+                        verified: result.isVerified,
+                      );
+                    },
                   ),
                   AnswerSheetView(pages: result.pages),
                 ],
@@ -464,7 +499,7 @@ class _QuestionCardState extends State<_QuestionCard> {
                     '${formatMarks(question.marks)} / ${formatMarks(question.maximum)}',
                     key: ValueKey<String>('student-marks-${question.questionId}'),
                     style: theme.textTheme.titleSmall?.copyWith(
-                      color: question.badge == SyllabusBadge.none ? AppTheme.accent : AppTheme.gold,
+                      color: question.badge == SyllabusBadge.none ? context.colors.primary : context.colors.bonus,
                     ),
                   ),
                 ],
@@ -476,7 +511,7 @@ class _QuestionCardState extends State<_QuestionCard> {
               if (question.comment.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 4),
                 Text('Teacher: ${question.comment}',
-                    style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.accent)),
+                    style: theme.textTheme.bodySmall?.copyWith(color: context.colors.primary)),
               ],
               const SizedBox(height: 6),
               if (request != null) _Status(request: request),
@@ -527,15 +562,15 @@ class _VerifyBar extends StatelessWidget {
       return Container(
         key: const Key('verified-badge'),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(color: AppTheme.successFill, borderRadius: BorderRadius.circular(4)),
+        decoration: BoxDecoration(color: context.colors.successFill, borderRadius: BorderRadius.circular(4)),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const Icon(Icons.verified_outlined, size: 16, color: AppTheme.success),
+            Icon(Icons.verified_outlined, size: 16, color: context.colors.success),
             const SizedBox(width: 6),
             Text(
               'You verified these marks on ${verified.toString().substring(0, 10)}',
-              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.success),
+              style: theme.textTheme.bodySmall?.copyWith(color: context.colors.success),
             ),
           ],
         ),
@@ -560,7 +595,7 @@ class _VerifyBar extends StatelessWidget {
             requestOpen
                 ? 'A request is waiting for your teacher — verify once it is answered.'
                 : 'When you have checked every question and your answer sheet, verify your marks.',
-            style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+            style: context.text.caption,
           ),
         ),
       ],
@@ -576,26 +611,21 @@ class _Status extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    final (Color colour, Color fill, String text) = switch (request.status) {
-      RequestStatus.open => (AppTheme.caution, AppTheme.cautionFill, 'Requested · waiting for your teacher'),
+    final (ToneKind tone, String text) = switch (request.status) {
+      RequestStatus.open => (ToneKind.warning, 'Requested · waiting for your teacher'),
       RequestStatus.accepted => (
-          AppTheme.success,
-          AppTheme.successFill,
+          ToneKind.success,
           'Accepted · ${formatMarks(request.oldMarks ?? 0)} → ${formatMarks(request.newMarks ?? 0)} marks'
               '${request.reply.isEmpty ? '' : ' — “${request.reply}”'}',
         ),
-      RequestStatus.declined => (
-          AppTheme.textSecondary,
-          AppTheme.pageBackground,
-          'Declined — “${request.reply}”',
-        ),
+      RequestStatus.declined => (ToneKind.neutral, 'Declined — “${request.reply}”'),
     };
-    return Container(
+    return StatusPill(
       key: ValueKey<String>('request-status-${request.questionId}'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(4)),
-      child: Text(text, style: theme.textTheme.bodySmall?.copyWith(color: colour)),
+      label: text,
+      tone: tone,
+      outlined: false,
+      wrap: true,
     );
   }
 }

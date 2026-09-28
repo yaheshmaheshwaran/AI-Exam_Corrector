@@ -173,6 +173,7 @@ class ReportExporter {
         'Counted',
         'Adjustments',
         'Syllabus badge',
+        'Marked against',
       ].map(_cell).join(','));
 
     void question(QuestionResult q) {
@@ -198,6 +199,7 @@ class ReportExporter {
             '${a.badge.label} (${a.percent}%)${a.bonus > 0 ? ' +${formatMarks(a.bonus)}' : ''}',
           _ => '',
         },
+        markedAgainst(q),
       ].map(_cell).join(','));
     }
 
@@ -328,7 +330,7 @@ class ReportExporter {
       final SyllabusAward? award = q.syllabusAward;
       final String badge = award == null || !award.hasBadge
           ? ''
-          : ' <span class="tag gold">★ ${e(award.badge.label)}${award.bonus > 0 ? ' +${formatMarks(award.bonus)}' : ''}</span>';
+          : ' <span class="tag bonus">★ ${e(award.badge.label)}${award.bonus > 0 ? ' +${formatMarks(award.bonus)}' : ''}</span>';
       rows.writeln('<tr>'
           '<td>${e(q.questionNumber)}</td>'
           '<td class="n">${formatMarks(reviews.finalMarks(q))} / ${formatMarks(q.maximumMarks)}</td>'
@@ -336,7 +338,8 @@ class ReportExporter {
           '$badge'
           '${overridden ? ' <span class="tag">changed by teacher</span>' : ''}</td>'
           '<td class="n">${(q.confidence * 100).round()}%${q.needsReview ? ' <span class="tag">review</span>' : ''}</td>'
-          '<td>${q.counted ? '' : '<p><span class="tag">not counted</span> ${e(q.choiceNote)}</p>'}${e(q.evaluation)}'
+          '<td><p class="basis">Marked against ${e(markedAgainst(q))}</p>'
+          '${q.counted ? '' : '<p><span class="tag">not counted</span> ${e(q.choiceNote)}</p>'}${e(q.evaluation)}'
           '${q.adjustments.isEmpty ? '' : '<p class="comment">${q.adjustments.map(e).join('<br>')}</p>'}'
           '${q.markingPoints.isEmpty ? '' : '<ul>${q.markingPoints.map((MarkingPoint p) => '<li>${p.satisfied ? '✓' : '✗'} ${e(p.criterion)} (${formatMarks(p.marks)}/${formatMarks(p.marksAvailable)})${p.evidenceRegionIds.isEmpty ? '' : ' — page ${p.evidenceRegionIds.map((String id) => assessment.region(id)?.pageNumber ?? '?').toSet().join(', ')}'}</li>').join()}</ul>'}'
           '${review != null && review.comment.isNotEmpty ? '<p class="comment">Teacher: ${e(review.comment)}</p>' : ''}'
@@ -347,14 +350,14 @@ class ReportExporter {
 <html lang="en"><head><meta charset="utf-8">
 <title>${e(assessment.answerSheet.fileName)} — marks</title>
 <style>
-body{font-family:"Segoe UI",system-ui,sans-serif;color:#1b1b1b;margin:32px;max-width:1000px}
-h1{font-size:20px;margin:0 0 4px}p.meta{color:#5d5d5d;margin:0 0 20px}
-table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e5e5;padding:8px;text-align:left;vertical-align:top;font-size:13px}
-th{background:#fafafa}td.n{white-space:nowrap}ul{margin:6px 0 0;padding-left:18px}
-.tag{font-size:11px;background:#fff4ce;color:#9d5d00;border-radius:3px;padding:1px 5px}
-.gold{background:#fff3cc;color:#b07d00;font-weight:600}
-.comment{color:#0067c0;margin:6px 0 0}.total{font-size:18px;margin-top:16px}
-tr.section td{background:#f0f6fc;font-weight:600}p.sections{color:#5d5d5d;margin:4px 0 0}
+body{font-family:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;color:#171717;background:#fff;margin:32px;max-width:1000px}
+h1{font-size:20px;margin:0 0 4px}p.meta{color:#5e5e5b;margin:0 0 20px}
+table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e4e4e2;padding:8px;text-align:left;vertical-align:top;font-size:13px}
+th{background:#f7f7f6}td.n{white-space:nowrap}ul{margin:6px 0 0;padding-left:18px}
+.tag{font-size:11px;background:#faead8;color:#8a5901;border:1px solid #dcbf9b;border-radius:4px;padding:1px 5px}
+.bonus{background:#deefff;color:#2f4f6d;border-color:#a7c8e9;font-weight:600}
+.comment{color:#3e2f23;margin:6px 0 0}.basis{color:#5e5e5b;font-size:12px;margin:0 0 4px}.total{font-size:18px;margin-top:16px}
+tr.section td{background:#f3eeea;font-weight:600}p.sections{color:#5e5e5b;margin:4px 0 0}
 </style></head><body>
 <h1>${e(assessment.answerSheet.fileName)}</h1>
 <p class="meta">Marked against ${e(assessment.questionPaper.title.isEmpty ? 'the question paper' : assessment.questionPaper.title)} · ${now.toLocal().toString().substring(0, 16)} · ${e(result.model)}${result.standard.isEmpty ? '' : ' · marked to ${e(result.standard)}'}</p>
@@ -366,4 +369,16 @@ ${sections.isEmpty ? '' : '<p class="sections">${sections.map((SectionTotal t) =
 </body></html>
 ''';
   }
+}
+
+/// What a question was marked against, in the teacher's words.
+String markedAgainst(QuestionResult q) {
+  final String basis = switch (q.markingPointsSource) {
+    MarkingPointSource.teacherKey => 'your answer key',
+    MarkingPointSource.markScheme => "the paper's mark scheme",
+    MarkingPointSource.teacherGuidance => 'your marking guidance',
+    MarkingPointSource.answerKey => "the AI's answer key",
+    MarkingPointSource.inferred => 'points the AI inferred',
+  };
+  return q.keyMatch == KeyMatch.equivalent ? '$basis (a correct answer that differs from it)' : basis;
 }

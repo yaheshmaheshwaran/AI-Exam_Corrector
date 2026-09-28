@@ -1,6 +1,7 @@
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/evidence.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
+import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/domain/moderation.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
@@ -334,11 +335,15 @@ class MarkingRules {
 
   /// A multiple-choice question: in a section the teacher marked as one, or
   /// printed with lettered options.
-  bool isMcq(MarkingTask task) {
-    final String? section = task.question.sectionId;
+  bool isMcq(MarkingTask task) => isMcqQuestion(task.question, standard);
+
+  /// A multiple-choice question: in a section the college marks as MCQ, or
+  /// printing at least three lettered options.
+  static bool isMcqQuestion(Question question, MarkingStandard standard) {
+    final String? section = question.sectionId;
     if (section != null && standard.mcqSections.contains(section)) return true;
     final Iterable<RegExpMatch> options =
-        RegExp(r'(?:^|\s|\()([a-dA-D])[).]\s').allMatches(task.question.questionText);
+        RegExp(r'(?:^|\s|\()([a-dA-D])[).]\s').allMatches(question.questionText);
     return options.map((RegExpMatch m) => m.group(1)!.toLowerCase()).toSet().length >= 3;
   }
 

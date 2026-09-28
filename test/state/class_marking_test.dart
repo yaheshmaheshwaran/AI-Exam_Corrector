@@ -200,9 +200,9 @@ void main() {
       await tester.tap(find.text('Choose…').last);
       await tester.pumpAndSettle();
 
-      expect(find.text("1. Students' answer sheets"), findsOneWidget);
+      expect(find.text("Students' answer sheets"), findsOneWidget);
       expect(find.text('3 answer sheets · 3 scanned'), findsOneWidget);
-      expect(find.text('4. Class results'), findsOneWidget);
+      expect(find.text('Class results'), findsOneWidget);
       expect(find.text('Not marked'), findsNWidgets(3));
 
       await tester.tap(find.text('Mark all 3 scripts'));
@@ -215,12 +215,12 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('script-row-1')));
       await tester.pumpAndSettle();
-      expect(find.text('4. bailey.pdf'), findsOneWidget);
+      expect(find.text('bailey.pdf'), findsOneWidget);
       expect(find.text('Question 1'), findsOneWidget);
 
       await tester.tap(find.text('All scripts'));
       await tester.pumpAndSettle();
-      expect(find.text('4. Class results'), findsOneWidget);
+      expect(find.text('Class results'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

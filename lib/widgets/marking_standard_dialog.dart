@@ -1,5 +1,15 @@
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/widgets/ui/app_dialog.dart';
+
+import 'package:exam_corrector/services/ui_sound.dart';
+
+import 'package:exam_corrector/app/press_feedback.dart';
+
+import 'package:exam_corrector/widgets/ui/select_field.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
 
@@ -22,7 +32,7 @@ class MarkingStandardDialog extends StatefulWidget {
     BuildContext context,
     MarkingStandard initial, {
     List<String> sections = const <String>[],
-  }) => showDialog<({MarkingStandard standard, bool asDefault})>(
+  }) => showAppDialog<({MarkingStandard standard, bool asDefault})>(
     context: context,
     builder: (BuildContext context) =>
         MarkingStandardDialog(initial: initial, sections: sections),
@@ -91,8 +101,8 @@ class _MarkingStandardDialogState extends State<MarkingStandardDialog> {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: AppTheme.pageBackground,
-                  border: Border.all(color: AppTheme.stroke),
+                  color: context.colors.surfaceMuted,
+                  border: Border.all(color: context.colors.border),
                   borderRadius: BorderRadius.circular(AppTheme.controlRadius),
                 ),
                 child: Table(
@@ -193,9 +203,7 @@ class _MarkingStandardDialogState extends State<MarkingStandardDialog> {
                       ),
                     Text(
                       '(questions with a) b) c) options are found on their own)',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: AppTheme.textSecondary,
-                      ),
+                      style: context.text.caption,
                     ),
                   ],
                 ),
@@ -219,9 +227,8 @@ class _MarkingStandardDialogState extends State<MarkingStandardDialog> {
               _RealismSection(
                 realism: _standard.realism,
                 level: _standard.level,
-                onChanged: (RealismRules r) => setState(
-                  () => _standard = _standard.copyWith(realism: r),
-                ),
+                onChanged: (RealismRules r) =>
+                    setState(() => _standard = _standard.copyWith(realism: r)),
               ),
               const SizedBox(height: 8),
               _SyllabusBonusSection(
@@ -240,17 +247,20 @@ class _MarkingStandardDialogState extends State<MarkingStandardDialog> {
                           're-marking, no requests.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: judgementChanged
-                      ? AppTheme.caution
-                      : AppTheme.textSecondary,
+                      ? context.colors.warning
+                      : context.colors.textMuted,
                 ),
               ),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: _asDefault,
-                onChanged: (bool? on) =>
-                    setState(() => _asDefault = on ?? false),
-                title: const Text('Use for new question papers too'),
+              ToggleRow(
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _asDefault,
+                  onChanged: toggled(
+                    (bool? on) => setState(() => _asDefault = on ?? false),
+                  ),
+                  title: const Text('Use for new question papers too'),
+                ),
               ),
             ],
           ),
@@ -296,9 +306,9 @@ class _Choice<T> extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Text(label, style: Theme.of(context).textTheme.bodySmall),
-        DropdownButton<T>(
+        const SizedBox(height: 4),
+        SelectField<T>(
           value: value,
-          isDense: true,
           items: <DropdownMenuItem<T>>[
             for (final MapEntry<T, String> option in options.entries)
               DropdownMenuItem<T>(value: option.key, child: Text(option.value)),
@@ -326,10 +336,14 @@ class _SyllabusBonusSection extends StatelessWidget {
       ? 'badge only'
       : '+${v == v.roundToDouble() ? v.toStringAsFixed(0) : v}';
 
-  static Map<double, String> _options(List<double> values, double current, String Function(double) words) =>
-      <double, String>{
-        for (final double v in <double>{...values, current}.toList()..sort()) v: words(v),
-      };
+  static Map<double, String> _options(
+    List<double> values,
+    double current,
+    String Function(double) words,
+  ) => <double, String>{
+    for (final double v in <double>{...values, current}.toList()..sort())
+      v: words(v),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -338,22 +352,32 @@ class _SyllabusBonusSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        SwitchListTile(
-          key: const Key('dialog-syllabus-bonus'),
-          contentPadding: EdgeInsets.zero,
-          value: bonus.enabled,
-          onChanged: (bool on) => onChanged(bonus.copyWith(enabled: on)),
-          title: Text('Syllabus bonus', style: theme.textTheme.titleSmall),
-          subtitle: Text(
-            'A badge — and a bonus mark — for an answer that covers what the '
-            'syllabus teaches for its question, almost or exactly.',
-            style: small,
+        ToggleRow(
+          child: SwitchListTile(
+            key: const Key('dialog-syllabus-bonus'),
+            contentPadding: EdgeInsets.zero,
+            value: bonus.enabled,
+            onChanged: toggled(
+              (bool on) => onChanged(bonus.copyWith(enabled: on)),
+            ),
+            title: Text('Syllabus bonus', style: theme.textTheme.titleSmall),
+            subtitle: Text(
+              'A badge — and a bonus mark — for an answer that covers what the '
+              'syllabus teaches for its question, almost or exactly.',
+              style: small,
+            ),
           ),
         ),
         if (bonus.enabled) ...<Widget>[
           Row(
             children: <Widget>[
-              SizedBox(width: 190, child: Text('Close to syllabus from ${_percent(bonus.almostThreshold)}', style: small)),
+              SizedBox(
+                width: 190,
+                child: Text(
+                  'Close to syllabus from ${_percent(bonus.almostThreshold)}',
+                  style: small,
+                ),
+              ),
               Expanded(
                 child: Slider(
                   key: const Key('dialog-almost-threshold'),
@@ -362,19 +386,27 @@ class _SyllabusBonusSection extends StatelessWidget {
                   max: 0.95,
                   divisions: 9,
                   label: _percent(bonus.almostThreshold),
-                  onChanged: (double v) => onChanged(bonus.copyWith(
-                    almostThreshold: v,
-                    exactThreshold: bonus.exactThreshold <= v + 1e-9
-                        ? (v + 0.05).clamp(0.6, 1).toDouble()
-                        : null,
-                  )),
+                  onChanged: (double v) => onChanged(
+                    bonus.copyWith(
+                      almostThreshold: v,
+                      exactThreshold: bonus.exactThreshold <= v + 1e-9
+                          ? (v + 0.05).clamp(0.6, 1).toDouble()
+                          : null,
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
           Row(
             children: <Widget>[
-              SizedBox(width: 190, child: Text('Syllabus match from ${_percent(bonus.exactThreshold)}', style: small)),
+              SizedBox(
+                width: 190,
+                child: Text(
+                  'Syllabus match from ${_percent(bonus.exactThreshold)}',
+                  style: small,
+                ),
+              ),
               Expanded(
                 child: Slider(
                   key: const Key('dialog-exact-threshold'),
@@ -383,12 +415,14 @@ class _SyllabusBonusSection extends StatelessWidget {
                   max: 1,
                   divisions: 8,
                   label: _percent(bonus.exactThreshold),
-                  onChanged: (double v) => onChanged(bonus.copyWith(
-                    exactThreshold: v,
-                    almostThreshold: bonus.almostThreshold >= v - 1e-9
-                        ? (v - 0.05).clamp(0.5, 0.95).toDouble()
-                        : null,
-                  )),
+                  onChanged: (double v) => onChanged(
+                    bonus.copyWith(
+                      exactThreshold: v,
+                      almostThreshold: bonus.almostThreshold >= v - 1e-9
+                          ? (v - 0.05).clamp(0.5, 0.95).toDouble()
+                          : null,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -401,23 +435,38 @@ class _SyllabusBonusSection extends StatelessWidget {
                 key: const Key('dialog-almost-bonus'),
                 label: 'Close to syllabus adds',
                 value: bonus.almostBonus,
-                options: _options(SyllabusBonus.bonuses, bonus.almostBonus, _marks),
-                onChanged: (double v) => onChanged(bonus.copyWith(almostBonus: v)),
+                options: _options(
+                  SyllabusBonus.bonuses,
+                  bonus.almostBonus,
+                  _marks,
+                ),
+                onChanged: (double v) =>
+                    onChanged(bonus.copyWith(almostBonus: v)),
               ),
               _Choice<double>(
                 key: const Key('dialog-exact-bonus'),
                 label: 'Syllabus match adds',
                 value: bonus.exactBonus,
-                options: _options(SyllabusBonus.bonuses, bonus.exactBonus, _marks),
-                onChanged: (double v) => onChanged(bonus.copyWith(exactBonus: v)),
+                options: _options(
+                  SyllabusBonus.bonuses,
+                  bonus.exactBonus,
+                  _marks,
+                ),
+                onChanged: (double v) =>
+                    onChanged(bonus.copyWith(exactBonus: v)),
               ),
               _Choice<double>(
                 key: const Key('dialog-minimum-share'),
                 label: 'Only when the answer already earned',
                 value: bonus.minimumShare,
-                options: _options(SyllabusBonus.minimumShares, bonus.minimumShare,
-                    (double v) => v == 0 ? 'any mark' : '${_percent(v)} of the marks'),
-                onChanged: (double v) => onChanged(bonus.copyWith(minimumShare: v)),
+                options: _options(
+                  SyllabusBonus.minimumShares,
+                  bonus.minimumShare,
+                  (double v) =>
+                      v == 0 ? 'any mark' : '${_percent(v)} of the marks',
+                ),
+                onChanged: (double v) =>
+                    onChanged(bonus.copyWith(minimumShare: v)),
               ),
             ],
           ),
@@ -426,7 +475,7 @@ class _SyllabusBonusSection extends StatelessWidget {
             'Measured against the syllabus topics the question touches, and the '
             'printed mark scheme where there is one. The bonus never takes a '
             'question above its maximum.',
-            style: small?.copyWith(color: AppTheme.textSecondary),
+            style: small?.copyWith(color: context.colors.textMuted),
           ),
         ],
       ],
@@ -436,7 +485,11 @@ class _SyllabusBonusSection extends StatelessWidget {
 
 /// Checks that keep marks where a real teacher would put them.
 class _RealismSection extends StatelessWidget {
-  const _RealismSection({required this.realism, required this.level, required this.onChanged});
+  const _RealismSection({
+    required this.realism,
+    required this.level,
+    required this.onChanged,
+  });
 
   final RealismRules realism;
   final MarkingLevel level;
@@ -447,15 +500,23 @@ class _RealismSection extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final TextStyle? small = theme.textTheme.bodySmall;
     String pct(double v) => '${(v * 100).round()}%';
-    Widget rule(Key key, bool value, String title, String detail, ValueChanged<bool> changed) => SwitchListTile(
-          key: key,
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          value: value,
-          onChanged: changed,
-          title: Text(title, style: theme.textTheme.bodyMedium),
-          subtitle: Text(detail, style: small),
-        );
+    Widget rule(
+      Key key,
+      bool value,
+      String title,
+      String detail,
+      ValueChanged<bool> changed,
+    ) => ToggleRow(
+      child: SwitchListTile(
+        key: key,
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: value,
+        onChanged: toggled(changed),
+        title: Text(title, style: theme.textTheme.bodyMedium),
+        subtitle: Text(detail, style: small),
+      ),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -466,7 +527,7 @@ class _RealismSection extends StatelessWidget {
           'Marks the way a real examiner does, so a class is not marked far above what its '
           'students would get. Step the strictness until the totals match your own marking — '
           'it applies at once, without re-marking.',
-          style: small?.copyWith(color: AppTheme.textSecondary),
+          style: small?.copyWith(color: context.colors.textMuted),
         ),
         const SizedBox(height: 8),
         SegmentedButton<RealismStrictness>(
@@ -487,19 +548,26 @@ class _RealismSection extends StatelessWidget {
           key: const Key('realism-rules'),
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: AppTheme.pageBackground,
-            border: Border.all(color: AppTheme.stroke),
+            color: context.colors.surfaceMuted,
+            border: Border.all(color: context.colors.border),
             borderRadius: BorderRadius.circular(AppTheme.controlRadius),
           ),
           child: Table(
-            columnWidths: const <int, TableColumnWidth>{0: FixedColumnWidth(150), 1: FlexColumnWidth()},
+            columnWidths: const <int, TableColumnWidth>{
+              0: FixedColumnWidth(150),
+              1: FlexColumnWidth(),
+            },
             children: <TableRow>[
-              for (final ({String rule, String effect}) rule in realism.strictness.rules)
+              for (final ({String rule, String effect}) rule
+                  in realism.strictness.rules)
                 TableRow(
                   children: <Widget>[
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Text(rule.rule, style: small?.copyWith(fontWeight: FontWeight.w600)),
+                      child: Text(
+                        rule.rule,
+                        style: small?.copyWith(fontWeight: FontWeight.w600),
+                      ),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -537,10 +605,14 @@ class _RealismSection extends StatelessWidget {
               label: 'A full answer, where the answer key does not say',
               value: realism.wordsPerMark,
               options: <double, String>{
-                for (final double v in <double>{...RealismRules.wordsPerMarkOptions, realism.wordsPerMark}.toList()..sort())
+                for (final double v in <double>{
+                  ...RealismRules.wordsPerMarkOptions,
+                  realism.wordsPerMark,
+                }.toList()..sort())
                   v: '${v.round()} words per mark',
               },
-              onChanged: (double v) => onChanged(realism.copyWith(wordsPerMark: v)),
+              onChanged: (double v) =>
+                  onChanged(realism.copyWith(wordsPerMark: v)),
             ),
           ),
         rule(

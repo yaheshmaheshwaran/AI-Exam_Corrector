@@ -5,7 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/app/app.dart';
 import 'package:exam_corrector/core/config/app_config.dart';
+import 'package:exam_corrector/app/app_colors.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
+import 'package:exam_corrector/state/appearance.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
 import '../state/fakes.dart';
@@ -33,10 +35,10 @@ void main() {
     await _sized(tester);
     await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
 
-    expect(find.text("1. Student's answer sheet"), findsOneWidget);
-    expect(find.text('2. Question paper'), findsOneWidget);
-    expect(find.text('3. Marking guidance (optional)'), findsOneWidget);
-    expect(find.text('4. Correction result'), findsOneWidget);
+    expect(find.text("Student's answer sheet"), findsOneWidget);
+    expect(find.text('Question paper'), findsOneWidget);
+    expect(find.text('Marking guidance'), findsOneWidget);
+    expect(find.text('Correction result'), findsOneWidget);
     expect(find.text('Correction results will appear here.'), findsOneWidget);
 
     FilledButton correctButton() =>
@@ -329,6 +331,42 @@ void main() {
 
       expect(store.saved, isNull);
       expect(controller.config.apiKey, configuredApp.apiKey);
+    });
+  });
+
+  group('appearance', () {
+    for (final ThemeMode mode in <ThemeMode>[ThemeMode.light, ThemeMode.dark]) {
+      testWidgets('marks a paper in the ${mode.name} theme without overflow', (WidgetTester tester) async {
+        await _sized(tester);
+        final Appearance appearance = Appearance(store: RecordingSettingsStore())..value = mode;
+        await tester.pumpWidget(ExamCorrectorApp(controller: fakeController(), appearance: appearance));
+        await tester.pumpAndSettle();
+
+        final BuildContext context = tester.element(find.text('Correction result'));
+        expect(context.colors, mode == ThemeMode.dark ? AppColors.dark : AppColors.light);
+
+        await _chooseBoth(tester);
+        await _correct(tester);
+        expect(tester.takeException(), isNull);
+        expect(find.text('Total marks: 2 / 4'), findsOneWidget);
+      });
+    }
+
+    testWidgets('switches theme from Settings at once, and saves the choice', (WidgetTester tester) async {
+      await _sized(tester, const Size(1280, 1000));
+      final RecordingSettingsStore store = RecordingSettingsStore();
+      final Appearance appearance = Appearance(store: store);
+      await tester.pumpWidget(ExamCorrectorApp(controller: fakeController(), appearance: appearance));
+
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dark'));
+      await tester.pumpAndSettle();
+
+      expect(appearance.value, ThemeMode.dark);
+      expect(store.savedTheme, 'dark');
+      final BuildContext context = tester.element(find.text('Correction result'));
+      expect(context.colors, AppColors.dark);
     });
   });
 }

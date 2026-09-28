@@ -24,15 +24,18 @@ import 'package:exam_corrector/pipeline/document/document_inspector.dart';
 import 'package:exam_corrector/pipeline/engines.dart';
 import 'package:exam_corrector/pipeline/exam_pipeline.dart';
 import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/pipeline/marking/teacher_key.dart';
 import 'package:exam_corrector/pipeline/syllabus/syllabus_matcher.dart';
 import 'package:exam_corrector/services/ai/model_usage.dart';
 import 'package:exam_corrector/services/export/report_exporter.dart';
 import 'package:exam_corrector/services/file_picker_service.dart';
+import 'package:exam_corrector/services/document_text_reader.dart';
 import 'package:exam_corrector/services/pdf_service.dart';
 import 'package:exam_corrector/models/published_result.dart';
 import 'package:exam_corrector/models/student_status.dart';
 import 'package:exam_corrector/models/correction_request.dart';
 import 'package:exam_corrector/services/results/results_repository.dart';
+import 'package:exam_corrector/services/results/session_results.dart';
 import 'package:exam_corrector/services/review/marking_standard_store.dart';
 import 'package:exam_corrector/services/review/teacher_work_store.dart';
 import 'package:exam_corrector/services/settings_store.dart';
@@ -58,6 +61,7 @@ class CorrectionController extends ChangeNotifier {
     FilePickerService filePicker = const FilePickerService(),
     SettingsStore settings = const SettingsStore(),
     PdfService pdfService = const PdfService(),
+    DocumentTextReader keyReader = const DocumentTextReader(),
     ReportExporter exporter = const ReportExporter(),
     SyllabusLibrary? syllabusLibrary,
     this.usage,
@@ -72,6 +76,7 @@ class CorrectionController extends ChangeNotifier {
         _filePicker = filePicker,
         _settings = settings,
         _pdf = pdfService,
+        _keyReader = keyReader,
         _exporter = exporter {
     if (!config.hasApiKey) {
       _statusMessage = 'No API key set — open Settings to add one.';
@@ -85,7 +90,31 @@ class CorrectionController extends ChangeNotifier {
   final FilePickerService _filePicker;
   final SettingsStore _settings;
   final PdfService _pdf;
+  final DocumentTextReader _keyReader;
   final ReportExporter _exporter;
+
+  /// The teacher's own answer key for the chosen paper; null when they have
+  /// not added one. Remembered per paper.
+  TeacherKey? _teacherKey;
+  bool _readingKey = false;
+
+  /// The paper's questions, read ahead of marking so the teacher's key can
+  /// be matched and reviewed before any script is marked.
+  QuestionPaper? _preparedPaper;
+
+  TeacherKey? get teacherKey => _teacherKey;
+  bool get isReadingKey => _readingKey;
+
+  /// The paper's questions as read: from a marked script, or read ahead.
+  QuestionPaper? get keyPaper => markedPaper ?? _preparedPaper;
+
+  /// How much of the paper the teacher's key covers, once it is matched.
+  ({int covered, int total, int printed})? get keyCoverage {
+    final TeacherKey? key = _teacherKey;
+    final QuestionPaper? paper = keyPaper;
+    if (key == null || !key.matched || paper == null) return null;
+    return key.coverage(paper);
+  }
 
   /// The teacher's saved syllabi; null where the feature is not wired up.
   final SyllabusLibrary? _library;
@@ -187,6 +216,7 @@ class CorrectionController extends ChangeNotifier {
   String? _guidanceFile;
 
   ProcessingJob? _job;
+  final _Pulse _progress = _Pulse();
   ProcessingJob? _resumable;
   int? _batchPosition;
 
@@ -279,6 +309,17 @@ class CorrectionController extends ChangeNotifier {
 
   /// The correction in progress, or the last one.
   ProcessingJob? get job => _job;
+
+  /// Fires as a correction moves within a stage — often. Only what shows
+  /// the progress ([job], [statusMessage]) listens here; everything else
+  /// listens to the controller, which fires when a job or stage begins.
+  Listenable get progress => _progress;
+
+  @override
+  void dispose() {
+    _progress.dispose();
+    super.dispose();
+  }
 
   /// A saved, unfinished run of the chosen pair of documents.
   ProcessingJob? get resumableJob => _resumable;
@@ -420,6 +461,7 @@ class CorrectionController extends ChangeNotifier {
         await _loadSavedWork(script);
       }
       await _loadResumable();
+      await _loadTeacherKey();
     } on AppException catch (error) {
       _questionPaper = null;
       _fail('The question paper could not be read.', error.message);
@@ -779,6 +821,14 @@ class CorrectionController extends ChangeNotifier {
     }
   }
 
+  /// The roll numbers of students who have signed up to the college, so
+  /// publishing can say when a roll has no account yet; null when that
+  /// cannot be known.
+  Future<Set<String>?> registeredRolls() async {
+    final ResultsRepository? results = _results;
+    return results is SessionResults ? results.registeredRolls() : null;
+  }
+
   /// Where every student stands with their published results: seen,
   /// verified, requests.
   Future<List<StudentStatus>> studentOverview({String? subjectCode, String? exam}) async =>
@@ -1046,8 +1096,8 @@ class CorrectionController extends ChangeNotifier {
   // Answer key
   // --------------------------------------------------------------------------
 
-  /// The key the paper was last marked against, with the teacher's edits;
-  /// null before any script of it was marked.
+  /// The paper's answer key: the AI's as last prepared, the teacher's own,
+  /// and their corrections; null when there is none of these.
   Future<AnswerKey?> answerKey() async {
     final SelectedDocument? paper = _questionPaper;
     if (paper == null) return null;
@@ -1055,7 +1105,11 @@ class CorrectionController extends ChangeNotifier {
       final TeacherWorkStore work = TeacherWorkStore(_pipeline().store);
       final Map<String, AnswerKeyEntry> entries = AnswerKey.entriesFromJson(await work.answerKey(paper.contentHash));
       final Map<String, String> edits = await work.answerKeyEdits(paper.contentHash);
-      final AnswerKey key = AnswerKey(entries: entries, edits: edits);
+      final AnswerKey key = AnswerKey(
+        entries: entries,
+        teacher: _teacherKey?.entries ?? const <String, TeacherKeyEntry>{},
+        edits: edits,
+      );
       return key.isEmpty ? null : key;
     } on IOException {
       return null;
@@ -1076,7 +1130,7 @@ class CorrectionController extends ChangeNotifier {
     final AnswerKey? before = await answerKey();
     final Map<String, String> kept = <String, String>{
       for (final MapEntry<String, String> e in edits.entries)
-        if (e.value.trim().isNotEmpty && e.value.trim() != (before?.entries[e.key]?.text ?? '').trim())
+        if (e.value.trim().isNotEmpty && e.value.trim() != (before?.baseTextFor(e.key) ?? '').trim())
           e.key: e.value.trim(),
     };
     try {
@@ -1093,16 +1147,104 @@ class CorrectionController extends ChangeNotifier {
       _setStatus('Answer key unchanged.');
       return;
     }
+    final int scripts = _flagRemark();
+    _setStatus(scripts == 0
+        ? 'Answer key saved.'
+        : 'Answer key saved — ${changed.length} question${changed.length == 1 ? '' : 's'} changed. '
+            'Re-mark to apply it to $scripts script${scripts == 1 ? '' : 's'}.');
+    notifyListeners();
+  }
+
+  /// Marked scripts are now marked against an out-of-date key: flag them.
+  int _flagRemark() {
     int scripts = 0;
     for (final MarkedScript script in _scripts) {
       if (script.result == null) continue;
       script.correctionsPending = true;
       scripts++;
     }
+    return scripts;
+  }
+
+  Future<void> _loadTeacherKey() async {
+    final SelectedDocument? paper = _questionPaper;
+    _teacherKey = null;
+    _preparedPaper = null;
+    if (paper == null) return;
+    try {
+      _teacherKey = TeacherKey.fromJson(await TeacherWorkStore(_pipeline().store).teacherKey(paper.contentHash));
+    } on IOException {
+      _teacherKey = null;
+    }
+    if (_teacherKey != null) await _readPaperAhead(paper);
+  }
+
+  /// Reads the paper's questions now, for the key; a paper that cannot be
+  /// read yet — a scan with the recogniser unavailable — is read when
+  /// marking starts instead.
+  Future<QuestionPaper?> _readPaperAhead(SelectedDocument paper) async {
+    try {
+      _preparedPaper = await _pipeline().readQuestionPaper(paper);
+    } on AppException {
+      _preparedPaper = null;
+    }
+    return _preparedPaper;
+  }
+
+  /// Adds the teacher's own answer key for the chosen paper, or replaces it.
+  /// It is matched to the paper's questions straight away when the paper can
+  /// be read; questions it does not cover are marked as before.
+  Future<void> chooseAnswerKey() async {
+    final SelectedDocument? paper = _questionPaper;
+    if (paper == null || isBusy || _readingKey) return;
+    final String? path = await _filePicker.pickAnswerKey();
+    if (path == null) return;
+
+    _readingKey = true;
+    _setStatus('Reading your answer key…');
+    try {
+      final TeacherKeySource source = await _keyReader.readAnswerKey(path);
+      final QuestionPaper? questions = await _readPaperAhead(paper);
+      final TeacherKey key = questions == null
+          ? source.unmatched
+          : await _pipeline().alignTeacherKey(questions, paper.contentHash, source, standard: _standard);
+      await TeacherWorkStore(_pipeline().store).saveTeacherKey(paper.contentHash, key.toJson());
+      final bool changed = _teacherKey?.sourceHash != key.sourceHash;
+      _teacherKey = key;
+      final int scripts = changed ? _flagRemark() : 0;
+      final ({int covered, int total, int printed})? coverage = keyCoverage;
+      _setStatus(<String>[
+        if (coverage == null)
+          'Answer key added. It will be matched to the questions when marking starts.'
+        else
+          'Answer key added: it covers ${coverage.covered} of ${coverage.total} questions; the rest are marked as usual.',
+        if (scripts > 0) 'Re-mark to apply it to $scripts script${scripts == 1 ? '' : 's'}.',
+      ].join(' '));
+    } on AppException catch (error) {
+      _fail('The answer key could not be used.', error.message);
+    } on IOException catch (error) {
+      _fail('The answer key could not be saved.', '$error');
+    } finally {
+      _readingKey = false;
+      notifyListeners();
+    }
+  }
+
+  /// Removes the teacher's answer key: the paper is marked as it was before.
+  Future<void> removeAnswerKey() async {
+    final SelectedDocument? paper = _questionPaper;
+    if (paper == null || _teacherKey == null || isBusy) return;
+    try {
+      await TeacherWorkStore(_pipeline().store).removeTeacherKey(paper.contentHash);
+    } on IOException catch (error) {
+      _fail('The answer key could not be removed.', '$error');
+      return;
+    }
+    _teacherKey = null;
+    final int scripts = _flagRemark();
     _setStatus(scripts == 0
-        ? 'Answer key saved.'
-        : 'Answer key saved — ${changed.length} question${changed.length == 1 ? '' : 's'} changed. '
-            'Re-mark to apply it to $scripts script${scripts == 1 ? '' : 's'}.');
+        ? 'Answer key removed.'
+        : 'Answer key removed. Re-mark to apply it to $scripts script${scripts == 1 ? '' : 's'}.');
     notifyListeners();
   }
 
@@ -1362,12 +1504,20 @@ class CorrectionController extends ChangeNotifier {
         moderation: _moderation,
         cancel: token,
         onUpdate: (ProcessingJob job) {
+          final ProcessingJob? previous = _job;
           _job = job;
           _statusMessage = _batchPosition == null
               ? job.message
               : 'Script $_batchPosition of ${_scripts.length}: ${job.message}';
           _statusIsError = false;
-          notifyListeners();
+          // Within a stage only the progress moves, and only the widgets
+          // showing it need to hear; a new job or stage changes what the
+          // window shows.
+          if (previous == null || previous.jobId != job.jobId || previous.stage != job.stage) {
+            notifyListeners();
+          } else {
+            _progress.pulse();
+          }
         },
       );
       script.assessment = assessment;
@@ -1727,6 +1877,10 @@ class CorrectionController extends ChangeNotifier {
     _pendingError = detail;
     notifyListeners();
   }
+}
+
+class _Pulse extends ChangeNotifier {
+  void pulse() => notifyListeners();
 }
 
 /// Convenience for widgets: a question's region pages, for the evidence list.

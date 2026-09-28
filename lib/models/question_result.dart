@@ -11,8 +11,11 @@ enum MarkingPointSource {
   /// Taken from the mark scheme printed on the question paper.
   markScheme,
 
-  /// Taken from the answer key prepared before any script was read.
+  /// Taken from the answer key the AI prepared before any script was read.
   answerKey,
+
+  /// Taken from the teacher's own answer key.
+  teacherKey,
 
   /// Decided by the marking model from the question and its subject
   /// knowledge, because nothing more specific was supplied.
@@ -23,6 +26,7 @@ enum MarkingPointSource {
           MarkingPointSource.teacherGuidance,
         'paper' || 'mark_scheme' || 'markScheme' => MarkingPointSource.markScheme,
         'key' || 'answer_key' || 'answerKey' => MarkingPointSource.answerKey,
+        'teacher_key' || 'teacherKey' => MarkingPointSource.teacherKey,
         _ => MarkingPointSource.inferred,
       };
 
@@ -30,7 +34,28 @@ enum MarkingPointSource {
         teacherGuidance => 'teacher',
         markScheme => 'paper',
         answerKey => 'key',
+        teacherKey => 'teacher_key',
         inferred => 'inferred',
+      };
+}
+
+/// How a student's answer stood against the teacher's own answer key.
+enum KeyMatch {
+  /// The answer the key gives.
+  matches,
+
+  /// A different answer that is also correct — another method, other
+  /// wording. It is credited, and the teacher asked to check it.
+  equivalent,
+
+  /// Not the key's answer, and not an equivalent one.
+  differs;
+
+  static KeyMatch? fromWire(Object? name) => switch (name) {
+        'matches' => KeyMatch.matches,
+        'equivalent' => KeyMatch.equivalent,
+        'differs' => KeyMatch.differs,
+        _ => null,
       };
 }
 
@@ -252,6 +277,7 @@ class QuestionResult {
     this.qualityBand,
     this.bandReason = '',
     this.moderatedFrom,
+    this.keyMatch,
   });
 
   /// As the question paper prints it.
@@ -322,6 +348,10 @@ class QuestionResult {
   /// paper is not moderated.
   final double? moderatedFrom;
 
+  /// How the answer stood against the teacher's own key; null when the
+  /// question was not marked against one.
+  final KeyMatch? keyMatch;
+
   SyllabusBadge get syllabusBadge => syllabusAward?.badge ?? SyllabusBadge.none;
 
   String get explanation => evaluation;
@@ -367,6 +397,7 @@ class QuestionResult {
       qualityBand: qualityBand,
       bandReason: bandReason,
       moderatedFrom: moderatedFrom == null ? this.moderatedFrom : moderatedFrom(),
+      keyMatch: keyMatch,
     );
   }
 
@@ -395,6 +426,7 @@ class QuestionResult {
         'qualityBand': ?qualityBand?.name,
         if (bandReason.isNotEmpty) 'bandReason': bandReason,
         'moderatedFrom': ?moderatedFrom,
+        'keyMatch': ?keyMatch?.name,
         'markingPoints': <JsonMap>[
           for (final MarkingPoint point in markingPoints) point.toJson(),
         ],
@@ -437,6 +469,7 @@ class QuestionResult {
       qualityBand: QualityBand.fromWire(json['qualityBand']),
       bandReason: readRawString(json['bandReason']) ?? '',
       moderatedFrom: readDouble(json['moderatedFrom']),
+      keyMatch: KeyMatch.fromWire(json['keyMatch']),
       syllabusAward: switch (readMap(json['syllabusAward'])) {
         final JsonMap award => SyllabusAward.fromJson(award),
         null => null,

@@ -26,9 +26,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  // Tall enough for the three workflow sections plus a scrollable result.
-  Win32Window::Size size(1180, 900);
-  if (!window.Create(L"Exam Corrector", origin, size)) {
+  // Wide enough for the setup rail beside the results.
+  Win32Window::Size size(1280, 820);
+  if (!window.Create(L"Marklume", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

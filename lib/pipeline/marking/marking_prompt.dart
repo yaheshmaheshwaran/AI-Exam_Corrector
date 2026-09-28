@@ -28,6 +28,7 @@ How the evidence is presented:
 - Crossed-out work is listed separately. It is not part of the final answer; do not credit it unless the student did not replace it with another attempt, and if you do rely on it, say so and set needs_review.
 
 Marking points:
+- If a TEACHER'S ANSWER KEY is given for a question, it is the teacher's own key and decides what is correct for that question. Take the marking points and what each is worth from it (source "teacher_key"); where it gives an answer but no points, the points are what that answer contains, and its marks are the question's maximum. A correct answer that differs from the key — another valid method, other wording, an equally correct example — earns the marks the key gives for that point: credit it, and report key_match "equivalent". Report key_match "matches" when the answer gives the key's answer, "differs" when it gives neither the key's answer nor an equivalent one, and "none" for a question with no teacher's key.
 - If an ANSWER KEY is given for a question, it was fixed before any script was read. Take the marking points and what each is worth from it (source "key"). Do not invent other points, drop points, or reshape them to fit the answer in front of you. A printed mark scheme and the teacher's guidance still take precedence over it.
 - If the question paper prints a mark scheme for a question, it is the authority on what earns the marks: take the marking points and what each is worth from it (source "paper"), and apply its rules — what to accept and not accept, "any two of", method marks, error carried forward. Where it gives a bare correct answer full marks, do so.
 - If the teacher's marking guidance covers a question, it is an important marking constraint: take marking points from it (source "teacher"). It adds to a printed mark scheme, and where the two disagree the teacher's guidance wins.
@@ -163,6 +164,11 @@ Evidence, honestly:
         out
           ..writeln('Mark scheme (printed on the question paper):')
           ..writeln(_indent(task.markScheme.trim()));
+      } else if (task.answerKey.trim().isNotEmpty && task.answerKeySource == AnswerKeySource.teacher) {
+        out
+          ..writeln("TEACHER'S ANSWER KEY (the teacher's own key — it decides what is correct for this question; "
+              'credit a correct equivalent answer too):')
+          ..writeln(_indent(task.answerKey.trim()));
       } else if (task.answerKey.trim().isNotEmpty) {
         out
           ..writeln('ANSWER KEY (fixed before marking — use these points; do not invent new ones):')
@@ -299,7 +305,7 @@ Evidence, honestly:
             'maximum_marks': <String, Object?>{'type': 'number'},
             'marking_points_source': <String, Object?>{
               'type': 'string',
-              'enum': <String>['paper', 'teacher', 'key', 'inferred', 'mixed'],
+              'enum': <String>['paper', 'teacher', 'teacher_key', 'key', 'inferred', 'mixed'],
             },
             'marking_points': <String, Object?>{
               'type': 'array',
@@ -310,7 +316,7 @@ Evidence, honestly:
                   'description': <String, Object?>{'type': 'string'},
                   'source': <String, Object?>{
                     'type': 'string',
-                    'enum': <String>['paper', 'teacher', 'key', 'inferred'],
+                    'enum': <String>['paper', 'teacher', 'teacher_key', 'key', 'inferred'],
                   },
                   'marks_available': <String, Object?>{'type': 'number'},
                   'marks_awarded': <String, Object?>{'type': 'number'},
@@ -338,6 +344,10 @@ Evidence, honestly:
               },
             },
             'awarded_marks': <String, Object?>{'type': 'number'},
+            'key_match': <String, Object?>{
+              'type': 'string',
+              'enum': <String>['matches', 'equivalent', 'differs', 'none'],
+            },
             'quality_band': <String, Object?>{
               'type': 'string',
               'enum': <String>['excellent', 'good', 'satisfactory', 'weak', 'poor', 'none'],
@@ -375,6 +385,7 @@ Evidence, honestly:
             'marking_points_source',
             'marking_points',
             'awarded_marks',
+            'key_match',
             'quality_band',
             'band_reason',
             'student_answer',

@@ -75,6 +75,9 @@ void main() {
     expect(find.byKey(const Key('marking-level')), findsOneWidget);
     expect(tester.widget<Text>(find.byKey(const Key('marking-summary'))).data, 'Balanced · half marks · Firm');
 
+    // The rail scrolls in a small window: bring the rules into view first.
+    await tester.ensureVisible(find.byKey(const Key('marking-rules')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('marking-rules')));
     await tester.pumpAndSettle();
     expect(find.text('Marking standard'), findsWidgets);

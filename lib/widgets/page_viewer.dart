@@ -2,7 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import 'package:exam_corrector/app/app_theme.dart';
+import 'package:exam_corrector/widgets/ui/app_dialog.dart';
+
+import 'package:exam_corrector/widgets/ui/skeleton.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/geometry.dart';
 import 'package:exam_corrector/domain/page_region.dart';
@@ -10,19 +15,37 @@ import 'package:exam_corrector/domain/page_region.dart';
 /// One colour per region type, shared by every view that draws regions, so a
 /// diagram is the same green in the evidence dialog and in the inspector.
 Color regionColor(RegionType type) => switch (type) {
-      RegionType.printedText => const Color(0xFF7A7A7A),
-      RegionType.questionNumber => const Color(0xFF8250DF),
-      RegionType.handwrittenAnswer => AppTheme.accent,
-      RegionType.diagram => const Color(0xFF0F7B0F),
-      RegionType.graph => const Color(0xFF00807A),
-      RegionType.table => const Color(0xFFC05A00),
-      RegionType.equation => const Color(0xFFC2185B),
-      RegionType.label => const Color(0xFF8A5A2B),
-      RegionType.crossedOut => AppTheme.danger,
-      RegionType.marginNote => const Color(0xFFB08600),
-      RegionType.header || RegionType.footer => const Color(0xFF5C6B7A),
-      RegionType.unknown => const Color(0xFF333333),
+      RegionType.printedText => AppColors.regionPrinted,
+      RegionType.questionNumber => AppColors.regionQuestionNumber,
+      RegionType.handwrittenAnswer => AppColors.regionHandwriting,
+      RegionType.diagram => AppColors.regionDiagram,
+      RegionType.graph => AppColors.regionGraph,
+      RegionType.table => AppColors.regionTable,
+      RegionType.equation => AppColors.regionEquation,
+      RegionType.label => AppColors.regionLabel,
+      RegionType.crossedOut => AppColors.regionCrossedOut,
+      RegionType.marginNote => AppColors.regionMarginNote,
+      RegionType.header || RegionType.footer => AppColors.regionHeader,
+      RegionType.unknown => AppColors.regionUnknown,
     };
+
+/// While a page image decodes, a skeleton holds its place; then the page
+/// fades in. An image already in memory appears at once.
+Widget _fadeIn(BuildContext context, Widget child, int? frame, bool wasSynchronouslyLoaded) {
+  if (wasSynchronouslyLoaded) return child;
+  return Stack(
+    fit: StackFit.passthrough,
+    children: <Widget>[
+      if (frame == null) const Positioned.fill(child: SkeletonImage()),
+      AnimatedOpacity(
+        opacity: frame == null ? 0 : 1,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        child: child,
+      ),
+    ],
+  );
+}
 
 /// A page as it was scanned, with regions drawn over it.
 ///
@@ -93,11 +116,9 @@ class PageViewer extends StatelessWidget {
                   children: <Widget>[
                     DecoratedBox(
                       decoration: BoxDecoration(
+                        // The scan is paper: white in either theme.
                         color: Colors.white,
-                        border: Border.all(color: AppTheme.stroke),
-                        boxShadow: const <BoxShadow>[
-                          BoxShadow(color: Color(0x14000000), blurRadius: 6),
-                        ],
+                        border: Border.all(color: context.colors.border),
                       ),
                       child: page.hasImage
                           ? Image.file(
@@ -105,6 +126,7 @@ class PageViewer extends StatelessWidget {
                               fit: BoxFit.fill,
                               cacheWidth: 1600,
                               gaplessPlayback: true,
+                              frameBuilder: _fadeIn,
                               errorBuilder: (_, _, _) => const _MissingImage(),
                             )
                           : const _MissingImage(),
@@ -147,13 +169,13 @@ class _MissingImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
         padding: EdgeInsets.all(12),
         child: Text(
           'Page image unavailable — regions are shown at their positions.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: AppTheme.textDisabled, fontSize: 11),
+          style: TextStyle(color: context.colors.textFaint, fontSize: 12),
         ),
       ),
     );
@@ -197,7 +219,7 @@ class _RegionPainter extends CustomPainter {
       if (isHighlight) {
         canvas.drawRect(
           rect.inflate(3),
-          Paint()..color = AppTheme.accent.withValues(alpha: 0.12),
+          Paint()..color = AppColors.regionHandwriting.withValues(alpha: 0.12),
         );
       }
       canvas.drawRect(
@@ -216,7 +238,7 @@ class _RegionPainter extends CustomPainter {
           region.detectedText!.split('\n').first,
           rect.topLeft + const Offset(2, 1),
           maxWidth: rect.width - 4,
-          colour: AppTheme.textSecondary,
+          colour: AppColors.regionPrinted,
           fontSize: (rect.height * 0.6).clamp(5, 11).toDouble(),
         );
       }
@@ -227,7 +249,7 @@ class _RegionPainter extends CustomPainter {
       }
     }
 
-    final Paint mark = Paint()..color = const Color(0x55FFC700);
+    final Paint mark = Paint()..color = AppColors.regionMark;
     for (final NormalizedBox box in extra) {
       canvas.drawRect(_rect(box, size), mark);
     }
@@ -237,7 +259,7 @@ class _RegionPainter extends CustomPainter {
     final TextPainter painter = TextPainter(
       text: TextSpan(
         text: caption,
-        style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w600),
+        style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w600),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
@@ -286,7 +308,7 @@ Future<void> showRegionOnPage(
   required PageRegion region,
   List<NormalizedBox> marks = const <NormalizedBox>[],
 }) {
-  return showDialog<void>(
+  return showAppDialog<void>(
     context: context,
     builder: (BuildContext context) {
       final Size screen = MediaQuery.sizeOf(context);
@@ -312,8 +334,7 @@ Future<void> showRegionOnPage(
                     ),
                     Text(
                       'Scroll or pinch to zoom',
-                      style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: AppTheme.textSecondary),
+                      style: context.text.caption,
                     ),
                     IconButton(
                       tooltip: 'Close',

@@ -27,9 +27,24 @@ class ResultsException extends AppException {
   const ResultsException(super.message);
 }
 
+/// Signing in, signing up or managing a college's members failed: a wrong
+/// password, a college ID that does not exist, or the college server out of
+/// reach.
+class AccountException extends AppException {
+  const AccountException(super.message, {this.offline = false});
+
+  /// The college server could not be reached, rather than refusing.
+  final bool offline;
+}
+
 /// A syllabus file could not be read or understood.
 class SyllabusException extends AppException {
   const SyllabusException(super.message);
+}
+
+/// The teacher's answer key file could not be read.
+class AnswerKeyException extends AppException {
+  const AnswerKeyException(super.message);
 }
 
 /// Correction failed for a reason the teacher should see.

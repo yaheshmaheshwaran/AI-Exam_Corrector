@@ -66,6 +66,7 @@ class TeacherWorkStore {
   static const String _answerKeyKey = 'answer-key-latest';
   static const String _answerKeyEditsKey = 'answer-key-edits';
   static const String _moderationKey = 'moderation';
+  static const String _teacherKeyKey = 'teacher-key';
 
   /// The answer key the paper was last marked against, as the pipeline
   /// saved it.
@@ -85,6 +86,16 @@ class TeacherWorkStore {
 
   Future<void> saveAnswerKeyEdits(String paperHash, Map<String, String> edits) =>
       _store.write(paperHash, _answerKeyEditsKey, Map<String, Object?>.of(edits));
+
+  /// The teacher's own answer key for the paper, as read and matched.
+  Future<JsonMap?> teacherKey(String paperHash) => _read(paperHash, _teacherKeyKey);
+
+  Future<void> saveTeacherKey(String paperHash, JsonMap key) => _store.write(paperHash, _teacherKeyKey, key);
+
+  Future<void> removeTeacherKey(String paperHash) async {
+    await _store.remove(paperHash, _teacherKeyKey);
+    if (!_store.enabled) await ArtifactStore(_store.root).remove(paperHash, _teacherKeyKey);
+  }
 
   /// The teacher's marks the paper is moderated by, and the moderation in
   /// force.

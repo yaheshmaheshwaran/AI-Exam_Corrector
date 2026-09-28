@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/widgets/ui/skeleton.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/models/correction_request.dart';
@@ -99,7 +103,10 @@ class _RequestsScreenState extends State<RequestsScreen> {
         ],
       ),
       body: _requests == null
-          ? const Center(child: CircularProgressIndicator())
+          ? const Padding(
+              padding: EdgeInsets.all(12),
+              child: Align(alignment: Alignment.topLeft, child: SizedBox(width: 360, child: SkeletonRows(count: 5, label: 'Loading requests'))),
+            )
           : LayoutBuilder(
               builder: (BuildContext context, BoxConstraints constraints) {
                 final Widget list = _List(
@@ -195,13 +202,13 @@ class _List extends StatelessWidget {
               child: Text(
                 openOnly ? 'No requests waiting.' : 'No requests yet.',
                 key: const Key('requests-empty'),
-                style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
+                style: context.text.muted,
               ),
             ),
           ),
         for (final CorrectionRequest request in requests)
           Card(
-            color: request.id == selected ? const Color(0xFFEAF3FC) : null,
+            color: request.id == selected ? context.colors.primarySoft : null,
             margin: const EdgeInsets.only(top: 6),
             child: ListTile(
               key: ValueKey<String>('request-row-${request.id}'),
@@ -220,7 +227,7 @@ class _List extends StatelessWidget {
                     ? '${formatMarks(request.currentMarks)}/${formatMarks(request.maximum)}'
                     : request.status.label,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: request.isOpen ? AppTheme.accent : AppTheme.textSecondary,
+                  color: request.isOpen ? context.colors.primary : context.colors.textMuted,
                 ),
               ),
             ),
@@ -325,14 +332,14 @@ class _DetailState extends State<_Detail> {
         Text(
           '${request.rollNo}${request.studentName.isEmpty ? '' : ' · ${request.studentName}'}'
           '  ·  ${request.subjectCode}${request.exam.isEmpty ? '' : ' · ${request.exam}'}',
-          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+          style: context.text.caption,
         ),
         Row(
           children: <Widget>[
             Expanded(child: Text('Question ${request.questionNumber}', style: theme.textTheme.titleLarge)),
             Text(
               '${formatMarks(request.currentMarks)} / ${formatMarks(request.maximum)}',
-              style: theme.textTheme.titleLarge?.copyWith(color: AppTheme.accent),
+              style: theme.textTheme.titleLarge?.copyWith(color: context.colors.primary),
             ),
           ],
         ),
@@ -340,7 +347,7 @@ class _DetailState extends State<_Detail> {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: AppTheme.cautionFill,
+            color: context.colors.warningFill,
             borderRadius: BorderRadius.circular(AppTheme.controlRadius),
           ),
           child: Text('The student asks: “${request.message}”', key: const Key('detail-reason'),
@@ -349,7 +356,7 @@ class _DetailState extends State<_Detail> {
         if (request.explanation.isNotEmpty) ...<Widget>[
           const SizedBox(height: 8),
           Text('Marked because: ${request.explanation}',
-              style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+              style: context.text.caption),
         ],
         const SizedBox(height: 14),
 
@@ -426,7 +433,7 @@ class _DetailState extends State<_Detail> {
                   ),
                   Text(
                     'Keeping the mark needs a reply saying why.',
-                    style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                    style: context.text.caption,
                   ),
                 ],
               ),
@@ -444,7 +451,7 @@ class _DetailState extends State<_Detail> {
 
         // The answer itself.
         if (_loading)
-          const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+          const SkeletonLines(lines: 4, label: "Loading the student's answer")
         else if (question == null)
           Text('This result is no longer published.', style: theme.textTheme.bodyMedium)
         else ...<Widget>[

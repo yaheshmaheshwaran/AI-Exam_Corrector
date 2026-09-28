@@ -1,6 +1,11 @@
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/widgets/ui/app_dialog.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
+import 'package:exam_corrector/widgets/ui/confirm_dialog.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/domain/syllabus.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
@@ -15,14 +20,13 @@ class SyllabusLibraryDialog extends StatelessWidget {
   final CorrectionController controller;
 
   static Future<void> show(BuildContext context, CorrectionController controller) =>
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => SyllabusLibraryDialog(controller: controller),
       );
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
     return ListenableBuilder(
       listenable: controller,
       builder: (BuildContext context, _) {
@@ -41,7 +45,7 @@ class SyllabusLibraryDialog extends StatelessWidget {
                   "as a reference for what the course teaches and how deeply — "
                   'never as an answer key, so correct answers beyond it still earn '
                   'marks.',
-                  style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                  style: context.text.caption,
                 ),
                 const SizedBox(height: 12),
                 _DropZone(controller: controller),
@@ -52,7 +56,7 @@ class SyllabusLibraryDialog extends StatelessWidget {
                           child: Text(
                             'No syllabi yet.',
                             textAlign: TextAlign.center,
-                            style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
+                            style: context.text.muted,
                           ),
                         )
                       : ListView(
@@ -101,7 +105,7 @@ class _DropZoneState extends State<_DropZone> {
     final ThemeData theme = Theme.of(context);
     final CorrectionController controller = widget.controller;
     final bool busy = controller.isBusy;
-    final Color edge = _hovering ? AppTheme.accent : AppTheme.stroke;
+    final Color edge = _hovering ? context.colors.primary : context.colors.border;
 
     return DropTarget(
       enable: !busy,
@@ -122,7 +126,7 @@ class _DropZoneState extends State<_DropZone> {
           constraints: const BoxConstraints(minHeight: 92),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           decoration: BoxDecoration(
-            color: _hovering ? const Color(0xFFEAF3FC) : AppTheme.subtleBackground,
+            color: _hovering ? context.colors.primarySoft : context.colors.surfaceMuted,
             border: Border.all(color: edge, width: _hovering ? 2 : 1),
             borderRadius: BorderRadius.circular(AppTheme.controlRadius),
           ),
@@ -144,7 +148,7 @@ class _DropZoneState extends State<_DropZone> {
                 : Column(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      Icon(Icons.file_download_outlined, size: 26, color: _hovering ? AppTheme.accent : AppTheme.textSecondary),
+                      Icon(Icons.file_download_outlined, size: 26, color: _hovering ? context.colors.primary : context.colors.textMuted),
                       const SizedBox(height: 4),
                       Text(
                         _hovering ? 'Drop to add' : 'Drop syllabus files here, or click to choose',
@@ -152,7 +156,7 @@ class _DropZoneState extends State<_DropZone> {
                       ),
                       Text(
                         'PDF, PowerPoint (.pptx), Word (.docx), .txt or .md — several at once is fine',
-                        style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                        style: context.text.caption,
                       ),
                     ],
                   ),
@@ -186,7 +190,7 @@ class _Entry extends StatelessWidget {
             if (added != null) 'added ${added.toString().substring(0, 10)}',
             if (syllabus.structuredBy == 'model') 'read by the AI',
           ].join(' · '),
-          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+          style: context.text.caption,
         ),
         trailing: Wrap(
           spacing: 2,
@@ -194,7 +198,7 @@ class _Entry extends StatelessWidget {
             IconButton(
               tooltip: 'View what was read',
               icon: const Icon(Icons.visibility_outlined, size: 18),
-              onPressed: () => showDialog<void>(
+              onPressed: () => showAppDialog<void>(
                 context: context,
                 builder: (BuildContext context) => SyllabusView(syllabus: syllabus),
               ),
@@ -217,23 +221,17 @@ class _Entry extends StatelessWidget {
   }
 
   Future<void> _remove(BuildContext context) async {
-    final bool? sure = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('Remove this syllabus?'),
-        content: Text('${syllabus.name} will no longer be used for marking. '
-            'Papers already marked keep their marks until re-marked.'),
-        actions: <Widget>[
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Remove')),
-        ],
-      ),
+    final bool sure = await confirmDialog(
+      context,
+      title: 'Remove this syllabus?',
+      message: '${syllabus.name} will no longer be used for marking. '
+          'Papers already marked keep their marks until re-marked.',
     );
-    if (sure ?? false) await controller.removeSyllabus(syllabus.id);
+    if (sure) await controller.removeSyllabus(syllabus.id);
   }
 
   Future<void> _edit(BuildContext context) async {
-    final ({String title, String code})? chosen = await showDialog<({String title, String code})>(
+    final ({String title, String code})? chosen = await showAppDialog<({String title, String code})>(
       context: context,
       builder: (BuildContext context) => _EditCourseDialog(syllabus: syllabus),
     );
@@ -298,7 +296,7 @@ class _EditCourseDialogState extends State<_EditCourseDialog> {
 class SyllabusView extends StatelessWidget {
   const SyllabusView({super.key, required this.syllabus});
 
-  static Future<void> show(BuildContext context, Syllabus syllabus) => showDialog<void>(
+  static Future<void> show(BuildContext context, Syllabus syllabus) => showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => SyllabusView(syllabus: syllabus),
       );
@@ -318,7 +316,7 @@ class SyllabusView extends StatelessWidget {
             for (final String note in syllabus.notes)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Text(note, style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.caution)),
+                child: Text(note, style: theme.textTheme.bodySmall?.copyWith(color: context.colors.warning)),
               ),
             for (final SyllabusUnit unit in syllabus.units) ...<Widget>[
               Text(

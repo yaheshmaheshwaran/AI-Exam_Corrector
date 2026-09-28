@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'package:exam_corrector/widgets/ui/skeleton.dart';
+
+import 'package:exam_corrector/widgets/ui/select_field.dart';
+
+import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
@@ -133,7 +139,10 @@ class _StudentStatusScreenState extends State<StudentStatusScreen> {
         ],
       ),
       body: _rows == null
-          ? const Center(child: CircularProgressIndicator())
+          ? const Padding(
+              padding: EdgeInsets.all(AppTheme.pagePadding),
+              child: Align(alignment: Alignment.topCenter, child: SkeletonTable(rows: 8, columns: 7, label: 'Loading students')),
+            )
           : Padding(
               padding: const EdgeInsets.all(AppTheme.pagePadding),
               child: Column(
@@ -168,7 +177,7 @@ class _StudentStatusScreenState extends State<StudentStatusScreen> {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: <Widget>[
-                      DropdownButton<String?>(
+                      SelectField<String?>(
                         key: const Key('filter-subject'),
                         value: _subject,
                         hint: const Text('All subjects'),
@@ -181,7 +190,7 @@ class _StudentStatusScreenState extends State<StudentStatusScreen> {
                           _load();
                         },
                       ),
-                      DropdownButton<String?>(
+                      SelectField<String?>(
                         key: const Key('filter-exam'),
                         value: _exam,
                         hint: const Text('All exams'),
@@ -217,7 +226,7 @@ class _StudentStatusScreenState extends State<StudentStatusScreen> {
                             child: Text(
                               all.isEmpty ? 'No results have been published yet.' : 'No students match.',
                               key: const Key('students-empty'),
-                              style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
+                              style: context.text.muted,
                             ),
                           )
                         : SingleChildScrollView(
@@ -280,7 +289,7 @@ class _StudentStatusScreenState extends State<StudentStatusScreen> {
                                               : Row(
                                                   mainAxisSize: MainAxisSize.min,
                                                   children: <Widget>[
-                                                    const Icon(Icons.verified_outlined, size: 16, color: AppTheme.success),
+                                                    Icon(Icons.verified_outlined, size: 16, color: context.colors.success),
                                                     const SizedBox(width: 4),
                                                     Text(_day(row.verifiedAt!)),
                                                   ],
@@ -305,18 +314,18 @@ class _StudentStatusScreenState extends State<StudentStatusScreen> {
 
   static String _day(DateTime date) => date.toString().substring(0, 10);
 
-  static Color _colour(StudentStage stage) => switch (stage) {
-        StudentStage.notSeen => AppTheme.danger,
-        StudentStage.seen => AppTheme.textSecondary,
-        StudentStage.requested => AppTheme.caution,
-        StudentStage.verified => AppTheme.success,
+  Color _colour(StudentStage stage) => switch (stage) {
+        StudentStage.notSeen => context.colors.danger,
+        StudentStage.seen => context.colors.textMuted,
+        StudentStage.requested => context.colors.warning,
+        StudentStage.verified => context.colors.success,
       };
 
-  static Color? _tint(StudentStage stage) => switch (stage) {
-        StudentStage.notSeen => const Color(0xFFFDF1F2),
+  Color? _tint(StudentStage stage) => switch (stage) {
+        StudentStage.notSeen => context.colors.dangerFill,
         StudentStage.seen => null,
-        StudentStage.requested => AppTheme.cautionFill,
-        StudentStage.verified => AppTheme.successFill,
+        StudentStage.requested => context.colors.warningFill,
+        StudentStage.verified => context.colors.successFill,
       };
 }
 
@@ -373,7 +382,7 @@ class _Requests extends StatelessWidget {
       child: Text(
         text,
         style: theme.textTheme.bodySmall?.copyWith(
-          color: row.openRequests > 0 ? AppTheme.caution : AppTheme.textSecondary,
+          color: row.openRequests > 0 ? context.colors.warning : context.colors.textMuted,
           fontWeight: row.openRequests > 0 ? FontWeight.w600 : null,
         ),
       ),
@@ -426,7 +435,7 @@ class _ResultScreen extends StatelessWidget {
                         '${q.badge == SyllabusBadge.none ? '' : '  ★ ${q.badge.label}${q.bonus > 0 ? ' +${formatMarks(q.bonus)}' : ''}'}',
                         style: q.badge == SyllabusBadge.none
                             ? null
-                            : const TextStyle(color: AppTheme.gold, fontWeight: FontWeight.w600),
+                            : TextStyle(color: context.colors.bonus, fontWeight: FontWeight.w600),
                       ),
                       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       children: <Widget>[QuestionAnswerView(question: q, pages: result.pages, pageHeight: 360)],

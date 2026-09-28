@@ -86,6 +86,11 @@ class FakeFilePicker extends FilePickerService {
   @override
   Future<String?> pickGuidance() async => guidancePath;
 
+  String? answerKeyPath;
+
+  @override
+  Future<String?> pickAnswerKey() async => answerKeyPath;
+
   @override
   Future<String?> pickSyllabus() async => syllabusPath;
 
@@ -110,10 +115,17 @@ class RecordingSettingsStore extends SettingsStore {
   String? savedLayout;
   bool? savedDeveloperMode;
   double? savedReviewThreshold;
+  String? savedTheme;
+  bool? savedSounds;
+  double? savedTransparency;
+  String? savedServerUrl;
+  String? savedServerKey;
 
   @override
   Future<Map<String, String>> read() async => <String, String>{
         if (saved case final String key) SettingsStore.apiKeyField: key,
+        if (savedServerUrl case final String url) SettingsStore.supabaseUrlField: url,
+        if (savedServerKey case final String key) SettingsStore.supabaseAnonKeyField: key,
       };
 
   @override
@@ -131,8 +143,24 @@ class RecordingSettingsStore extends SettingsStore {
     double? reviewThreshold,
     bool? visualAnalysis,
     bool? developerMode,
+    String? theme,
+    bool? sounds,
+    double? transparency,
+    String? supabaseUrl,
+    String? supabaseAnonKey,
   }) async {
     if (throwOnSave) throw const FileSystemException('disk full');
+    if (supabaseUrl != null || supabaseAnonKey != null) {
+      savedServerUrl = supabaseUrl ?? savedServerUrl;
+      savedServerKey = supabaseAnonKey ?? savedServerKey;
+      return;
+    }
+    if (theme != null || sounds != null || transparency != null) {
+      savedTheme = theme ?? savedTheme;
+      savedSounds = sounds ?? savedSounds;
+      savedTransparency = transparency ?? savedTransparency;
+      return;
+    }
     if (apiKey != null) saved = apiKey.trim().isEmpty ? null : apiKey.trim();
     if (model != null && model.trim().isNotEmpty) savedModel = model.trim();
     if (fallbackModels != null) savedFallbacks = fallbackModels.trim();

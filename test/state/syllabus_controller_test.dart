@@ -158,7 +158,10 @@ void main() {
     expect(find.text('Internet of Things and its Applications (CCS356) · 5 units'), findsOneWidget);
     expect(find.text('used for this paper'), findsOneWidget);
 
-    // A course opens to show what was read.
+    // A course opens to show what was read. The rail scrolls in a small
+    // window: bring the course into view first.
+    await tester.ensureVisible(find.text('Internet of Things and its Applications (CCS356) · 5 units'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Internet of Things and its Applications (CCS356) · 5 units'));
     await tester.pumpAndSettle();
     expect(find.text('Unit III — IoT Communication and Connectivity  ·  9 hours'), findsOneWidget);
