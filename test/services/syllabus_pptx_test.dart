@@ -4,15 +4,18 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:exam_corrector/ai/ai_settings.dart';
+import 'package:exam_corrector/marking/marking_settings.dart';
+
 import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/domain/syllabus.dart';
-import 'package:exam_corrector/services/ai/model_client.dart';
+import 'package:exam_corrector/ai/model_request.dart';
 import 'package:exam_corrector/services/syllabus/model_syllabus_structurer.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_parser.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_reader.dart';
 
-import '../pipeline/pipeline_fakes.dart';
+import '../marking/marking_fakes.dart';
 
 const String _ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
     'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
@@ -152,7 +155,7 @@ void main() {
 
     expect(saved.units, hasLength(2));
     expect(saved.structuredBy, 'parser');
-    expect(saved.notes.single, allOf(contains('Slide 4 is a picture'), contains('API key')));
+    expect(saved.notes.single, allOf(contains('Slide 4 is a picture'), contains('set up the AI')));
   });
 
   test('with the AI, the picture slide is sent to be read with the text', () async {
@@ -169,7 +172,7 @@ void main() {
         });
     final SyllabusLibrary library = SyllabusLibrary(
       Directory('${dir.path}/library'),
-      structurer: ModelSyllabusStructurer(model, () => pipelineConfig),
+      structurer: ModelSyllabusStructurer(model, () => MarkingSettings(ai: AiSettings.fromMap(const <String, String>{}))),
     );
     final List<String> progress = <String>[];
 
@@ -202,7 +205,7 @@ void main() {
       throwsA(isA<SyllabusException>().having(
         (SyllabusException e) => e.message,
         'message',
-        allOf(contains('in pictures (slides 1)'), contains('API key')),
+        allOf(contains('in pictures (slides 1)'), contains('Set up the AI')),
       )),
     );
   });

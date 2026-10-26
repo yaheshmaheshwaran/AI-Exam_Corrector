@@ -1,25 +1,23 @@
 import 'dart:typed_data';
 
 import 'package:exam_corrector/core/async/cancellation.dart';
-import 'package:exam_corrector/core/config/app_config.dart';
+import 'package:exam_corrector/ai/model_roles.dart';
 import 'package:exam_corrector/domain/json_read.dart';
 import 'package:exam_corrector/domain/syllabus.dart';
-import 'package:exam_corrector/services/ai/model_client.dart';
+import 'package:exam_corrector/ai/model_request.dart';
+import 'package:exam_corrector/marking/marking_settings.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_parser.dart';
 
 /// Reads a syllabus's units with a model, for a layout the parser does not
 /// know. One text-only request per syllabus, made once when it is added.
 class ModelSyllabusStructurer {
-  ModelSyllabusStructurer(this._client, this._configProvider);
+  ModelSyllabusStructurer(this._client, this._settingsProvider);
 
   final ModelClient _client;
-  final AppConfig Function() _configProvider;
+  final MarkingSettings Function() _settingsProvider;
 
   bool get isAvailable => _client.isAvailable;
 
-  /// Longer syllabi are cut here; units come early, books and references
-  /// late, so little that matters is lost.
-  static const int maxCharacters = 40000;
 
   static const String systemPrompt = '''
 You read a university course syllabus and return its structure. You copy what it says; you never add topics of your own.
@@ -79,10 +77,13 @@ You read a university course syllabus and return its structure. You copy what it
     CancellationToken? cancel,
     void Function(String message)? onProgress,
   }) async {
+    // Longer syllabi are cut here — less for an open model; units come
+    // early, books and references late, so little that matters is lost.
+    final MarkingSettings settings = _settingsProvider();
+    final int maxCharacters = settings.limitsForChain(settings.chain(ModelRole.prep)).syllabusCharacters;
     final String trimmed =
         text.length > maxCharacters ? text.substring(0, maxCharacters) : text;
     final List<({int slide, Uint8List bytes, String mimeType})> sent = images.take(maxImages).toList();
-    final AppConfig config = _configProvider();
     final ModelResponse response = await _client.requestJson(
       ModelRequest(
         purpose: 'syllabus reading',
@@ -100,7 +101,7 @@ You read a university course syllabus and return its structure. You copy what it
         truncationHint: 'The syllabus was too long to read in one request.',
         refusalMessage: 'The AI declined to read this syllabus.',
       ),
-      models: sent.isEmpty ? config.modelChain : config.chainFor(config.effectiveVisionModel),
+      models: settings.chain(ModelRole.prep),
       onProgress: onProgress,
       cancel: cancel,
     );

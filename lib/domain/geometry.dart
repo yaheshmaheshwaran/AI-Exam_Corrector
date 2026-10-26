@@ -33,6 +33,14 @@ class NormalizedBox {
     ).clamped();
   }
 
+  /// From an `[xmin, ymin, xmax, ymax]` box on a 0–1000 scale, the order
+  /// Qwen-class open models use.
+  static NormalizedBox? fromXyxy(Object? raw) {
+    final List<Object?> values = readList(raw);
+    if (values.length != 4) return null;
+    return fromBox2d(<Object?>[values[1], values[0], values[3], values[2]]);
+  }
+
   /// From the `[ymin, xmin, ymax, xmax]` box on a 0–1000 scale that Gemini
   /// vision models return for detected objects.
   static NormalizedBox? fromBox2d(Object? raw) {

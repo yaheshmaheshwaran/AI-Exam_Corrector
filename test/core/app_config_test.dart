@@ -1,115 +1,59 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/core/config/app_config.dart';
+import 'package:exam_corrector/core/config/dotenv.dart';
 import 'package:exam_corrector/core/constants/app_constants.dart';
-import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/core/utils/marks_format.dart';
 
 void main() {
   group('AppConfig', () {
     test('falls back to defaults when nothing is set', () {
       final AppConfig config = AppConfig.fromMap(const <String, String>{});
-
-      expect(config.apiKey, isNull);
-      expect(config.hasApiKey, isFalse);
-      expect(config.model, AppConstants.defaultModel);
-      expect(config.effort, AppConstants.defaultEffort);
-      expect(config.maxTokens, AppConstants.defaultMaxTokens);
+      expect(config.reviewThreshold, AppConstants.defaultReviewThreshold);
+      expect(config.backgroundProcessing, isFalse);
+      expect(config.developerMode, isFalse);
+      expect(config.cacheEnabled, isTrue);
+      expect(config.warnings, isEmpty);
     });
 
-    test('reads overrides from the environment', () {
-      final AppConfig config = AppConfig.fromMap(const <String, String>{
-        'GEMINI_API_KEY': 'test-key',
-        'EXAM_CORRECTOR_MODEL': 'gemini-2.5-pro',
-        'EXAM_CORRECTOR_EFFORT': 'medium',
-        'EXAM_CORRECTOR_MAX_TOKENS': '8000',
-      });
-
-      expect(config.hasApiKey, isTrue);
-      expect(config.model, 'gemini-2.5-pro');
-      expect(config.effort, 'medium');
-      expect(config.maxTokens, 8000);
-    });
-
-    test('lets real environment variables win over .env values', () {
+    test('reads overrides, and real environment variables win over saved settings and .env', () {
       final AppConfig config = AppConfig.fromMap(
-        const <String, String>{'GEMINI_API_KEY': 'from-environment'},
-        fallback: const <String, String>{'GEMINI_API_KEY': 'from-dotenv'},
+        const <String, String>{AppConfig.backgroundName: 'yes'},
+        fallback: const <String, String>{
+          AppConfig.backgroundName: 'false',
+          AppConfig.reviewThresholdName: '0.85',
+          AppConfig.developerModeName: 'on',
+          AppConfig.cacheName: '0',
+        },
       );
-
-      expect(config.apiKey, 'from-environment');
+      expect(config.backgroundProcessing, isTrue);
+      expect(config.reviewThreshold, 0.85);
+      expect(config.developerMode, isTrue);
+      expect(config.cacheEnabled, isFalse);
     });
 
-    test('uses .env values when the environment is silent', () {
-      final AppConfig config = AppConfig.fromMap(
-        const <String, String>{},
-        fallback: const <String, String>{'GEMINI_API_KEY': 'from-dotenv'},
-      );
-
-      expect(config.apiKey, 'from-dotenv');
-    });
-
-    test('defaults to the built-in fallback chain', () {
-      final AppConfig config = AppConfig.fromMap(const <String, String>{});
-
-      expect(config.fallbackModels, AppConstants.defaultFallbackModels);
-      expect(config.modelChain.first, AppConstants.defaultModel);
-    });
-
-    test('reads a comma-separated fallback chain', () {
+    test('a value that cannot be used never stops the app: it is named and defaulted', () {
       final AppConfig config = AppConfig.fromMap(const <String, String>{
-        'EXAM_CORRECTOR_MODEL': 'gemini-3.6-flash',
-        'EXAM_CORRECTOR_FALLBACK_MODELS':
-            ' gemini-3.5-flash , gemini-3.5-flash-lite ,, ',
+        AppConfig.reviewThresholdName: '1.5',
+        AppConfig.backgroundName: 'sometimes',
       });
-
-      expect(config.modelChain, <String>[
-        'gemini-3.6-flash',
-        'gemini-3.5-flash',
-        'gemini-3.5-flash-lite',
-      ]);
-    });
-
-    test('never repeats the primary model in the chain', () {
-      final AppConfig config = AppConfig.fromMap(const <String, String>{
-        'EXAM_CORRECTOR_MODEL': 'gemini-3.6-flash',
-        'EXAM_CORRECTOR_FALLBACK_MODELS': 'gemini-3.6-flash, gemini-3.5-flash',
-      });
-
-      expect(config.modelChain, <String>['gemini-3.6-flash', 'gemini-3.5-flash']);
-    });
-
-    test('an empty setting turns fallbacks off', () {
-      // Deliberate: it keeps every paper in a batch on one model.
-      final AppConfig config = AppConfig.fromMap(const <String, String>{
-        'EXAM_CORRECTOR_FALLBACK_MODELS': '',
-      });
-
-      expect(config.fallbackModels, isEmpty);
-      expect(config.modelChain, hasLength(1));
-    });
-
-    test('rejects a non-numeric token limit', () {
-      expect(
-        () => AppConfig.fromMap(
-          const <String, String>{'EXAM_CORRECTOR_MAX_TOKENS': 'lots'},
-        ),
-        throwsA(isA<ConfigException>()),
-      );
+      expect(config.reviewThreshold, AppConstants.defaultReviewThreshold);
+      expect(config.backgroundProcessing, isFalse);
+      expect(config.warnings, hasLength(2));
     });
 
     test('parses .env files, ignoring comments and quotes', () {
-      final Map<String, String> values = AppConfig.parseDotEnv('''
+      final Map<String, String> values = DotEnv.parse('''
 # a comment
-GEMINI_API_KEY="gemini-quoted"
-
-EXAM_CORRECTOR_EFFORT = high
-not a pair
+GEMINI_API_KEY="quoted key"
+EMPTY=
+NOT A LINE
+EXAM_CORRECTOR_DEBUG='true'
 ''');
-
-      expect(values['GEMINI_API_KEY'], 'gemini-quoted');
-      expect(values['EXAM_CORRECTOR_EFFORT'], 'high');
-      expect(values.containsKey('not a pair'), isFalse);
+      expect(values['GEMINI_API_KEY'], 'quoted key');
+      expect(values['EMPTY'], '');
+      expect(values['EXAM_CORRECTOR_DEBUG'], 'true');
+      expect(values.containsKey('NOT A LINE'), isFalse);
     });
   });
 
@@ -126,4 +70,5 @@ not a pair
       expect(formatCount(42), '42');
     });
   });
+
 }

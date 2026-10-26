@@ -2,7 +2,7 @@
 ///
 /// Every domain model round-trips through JSON — that is what makes each
 /// pipeline stage cacheable and resumable — and the same readers decode what
-/// the sidecar and the AI send back. None of them throw: a missing or
+/// the AI and the cache send back. None of them throw: a missing or
 /// malformed field becomes the caller's fallback, and the caller decides
 /// whether that is acceptable.
 library;

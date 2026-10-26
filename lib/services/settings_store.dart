@@ -10,34 +10,46 @@ import 'dart:io';
 class SettingsStore {
   const SettingsStore();
 
+  // The AI providers and which models do each job (lib/ai). The names match
+  // the environment variables, so the settings and a .env are read alike.
   static const String apiKeyField = 'GEMINI_API_KEY';
-  static const String modelField = 'EXAM_CORRECTOR_MODEL';
-  static const String fallbackModelsField = 'EXAM_CORRECTOR_FALLBACK_MODELS';
+  static const String nvidiaKeyField = 'NVIDIA_API_KEY';
+  static const String prepModelsField = 'EXAM_CORRECTOR_PREP_MODELS';
+  static const String readerModelsField = 'EXAM_CORRECTOR_READER_MODELS';
+  static const String markerModelsField = 'EXAM_CORRECTOR_MARKER_MODELS';
 
-  // Handwriting recognition. The field names match the environment variables
-  // so that AppConfig can merge both sources without translating between them.
-  static const String ocrEnabledField = 'EXAM_CORRECTOR_OCR_ENABLED';
-  static const String trocrModelField = 'EXAM_CORRECTOR_TROCR_MODEL';
-  static const String ocrThresholdField = 'EXAM_CORRECTOR_OCR_THRESHOLD';
-  static const String visionCrossCheckField =
-      'EXAM_CORRECTOR_OCR_VISION_CHECK';
-  static const String ocrDpiField = 'EXAM_CORRECTOR_OCR_DPI';
-
-  // Page understanding and marking.
-  static const String layoutEngineField = 'EXAM_CORRECTOR_LAYOUT_ENGINE';
-  static const String visionModelField = 'EXAM_CORRECTOR_VISION_MODEL';
+  // How marking behaves (AppConfig).
   static const String reviewThresholdField = 'EXAM_CORRECTOR_REVIEW_THRESHOLD';
-  static const String visualAnalysisField = 'EXAM_CORRECTOR_VISUAL_ANALYSIS';
+  static const String backgroundField = 'EXAM_CORRECTOR_BACKGROUND';
   static const String developerModeField = 'EXAM_CORRECTOR_DEBUG';
 
-  // Appearance: system, light or dark.
-  static const String themeField = 'EXAM_CORRECTOR_THEME';
+  /// Settings of the pipeline before the 2026 rewrite: one Gemini model and
+  /// its backups, the open-model presets, TrOCR and the layout engine. Removed
+  /// whenever settings are saved: read now, they would only mislead.
+  static const List<String> retiredFields = <String>[
+    'EXAM_CORRECTOR_MODEL',
+    'EXAM_CORRECTOR_FALLBACK_MODELS',
+    'EXAM_CORRECTOR_READING_MODELS',
+    'EXAM_CORRECTOR_USE_GEMINI',
+    'EXAM_CORRECTOR_OPEN_PRESET',
+    'EXAM_CORRECTOR_OPEN_MODEL',
+    'EXAM_CORRECTOR_OCR_ENABLED',
+    'EXAM_CORRECTOR_TROCR_MODEL',
+    'EXAM_CORRECTOR_OCR_THRESHOLD',
+    'EXAM_CORRECTOR_OCR_VISION_CHECK',
+    'EXAM_CORRECTOR_OCR_DPI',
+    'EXAM_CORRECTOR_LAYOUT_ENGINE',
+    'EXAM_CORRECTOR_VISION_MODEL',
+    'EXAM_CORRECTOR_VISUAL_ANALYSIS',
+    'EXAM_CORRECTOR_EXAM_PREP',
+    'HF_TOKEN',
+  ];
 
   // Click sounds on controls: on unless turned off.
   static const String soundsField = 'EXAM_CORRECTOR_SOUNDS';
 
-  // Frosted surfaces: how clear, from 0 (solid) to 1. Older versions saved
-  // 'true' or 'false'.
+  // Glass blur on the floating bars: from 0 (solid) to 1. Older versions
+  // saved 'true' or 'false'.
   static const String transparencyField = 'EXAM_CORRECTOR_TRANSPARENCY';
 
   // The college server: where accounts and published results live. The URL
@@ -69,25 +81,21 @@ class SettingsStore {
   /// Saves the settings the teacher can change, removing any left empty.
   Future<void> save({
     String? apiKey,
-    String? model,
-    String? fallbackModels,
-    bool? ocrEnabled,
-    String? trocrModel,
-    double? ocrThreshold,
-    bool? visionCrossCheck,
-    int? ocrDpi,
-    String? layoutEngine,
-    String? visionModel,
+    String? nvidiaKey,
+    String? prepModels,
+    String? readerModels,
+    String? markerModels,
     double? reviewThreshold,
-    bool? visualAnalysis,
+    bool? backgroundProcessing,
     bool? developerMode,
-    String? theme,
     bool? sounds,
     double? transparency,
     String? supabaseUrl,
     String? supabaseAnonKey,
+    Map<String, String> openModels = const <String, String>{},
   }) async {
-    final Map<String, String> values = Map<String, String>.from(await read());
+    final Map<String, String> values = Map<String, String>.from(await read())
+      ..removeWhere((String field, String _) => retiredFields.contains(field));
 
     void put(String field, String? value) {
       if (value == null) return;
@@ -99,31 +107,13 @@ class SettingsStore {
     }
 
     put(apiKeyField, apiKey);
-    put(modelField, model);
-    // An empty list is a deliberate choice ("keep every paper on one model"),
-    // so it is stored as an empty value rather than removed.
-    if (fallbackModels != null) values[fallbackModelsField] = fallbackModels.trim();
-
     // Booleans are written as the same words AppConfig parses from the
     // environment, so a settings file can be read as if it were a .env.
-    if (ocrEnabled != null) values[ocrEnabledField] = '$ocrEnabled';
-    if (visionCrossCheck != null) {
-      values[visionCrossCheckField] = '$visionCrossCheck';
-    }
-    put(trocrModelField, trocrModel);
-    if (ocrThreshold != null) {
-      values[ocrThresholdField] = ocrThreshold.toStringAsFixed(2);
-    }
-    if (ocrDpi != null) values[ocrDpiField] = '$ocrDpi';
-
-    put(layoutEngineField, layoutEngine);
-    put(visionModelField, visionModel);
     if (reviewThreshold != null) {
       values[reviewThresholdField] = reviewThreshold.toStringAsFixed(2);
     }
-    if (visualAnalysis != null) values[visualAnalysisField] = '$visualAnalysis';
+    if (backgroundProcessing != null) values[backgroundField] = '$backgroundProcessing';
     if (developerMode != null) values[developerModeField] = '$developerMode';
-    put(themeField, theme);
     if (sounds != null) values[soundsField] = '$sounds';
     if (transparency != null) {
       values[transparencyField] = transparency.toStringAsFixed(2);
@@ -131,6 +121,15 @@ class SettingsStore {
 
     put(supabaseUrlField, supabaseUrl);
     put(supabaseAnonKeyField, supabaseAnonKey);
+
+    put(nvidiaKeyField, nvidiaKey);
+    put(prepModelsField, prepModels);
+    put(readerModelsField, readerModels);
+    put(markerModelsField, markerModels);
+
+    // Our own model servers' addresses and keys, as lib/ai/providers.dart
+    // names them.
+    openModels.forEach(put);
 
     final File? file = _file;
     if (file == null) return;

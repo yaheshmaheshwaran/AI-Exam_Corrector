@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/models/published_result.dart';
-import 'package:exam_corrector/widgets/answer_view.dart';
-import 'package:exam_corrector/widgets/page_viewer.dart';
+import 'package:exam_corrector/features/results/ui/answer_view.dart';
+import 'package:exam_corrector/features/results/ui/page_viewer.dart';
 
 void main() {
   late Directory dir;

@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:exam_corrector/services/results/results_repository.dart';
-import 'package:exam_corrector/services/review/marking_standard_store.dart';
-import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
+import 'package:exam_corrector/ai/ai_settings.dart';
+import 'package:exam_corrector/ai/model_request.dart';
+import 'package:exam_corrector/ai/model_roles.dart';
+import 'package:exam_corrector/ai/provider_health.dart';
+import 'package:exam_corrector/ai/providers.dart';
+import 'package:exam_corrector/ai/usage.dart';
 import 'package:exam_corrector/core/async/cancellation.dart';
 import 'package:exam_corrector/core/config/app_config.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
@@ -14,27 +17,39 @@ import 'package:exam_corrector/domain/json_read.dart';
 import 'package:exam_corrector/domain/page_region.dart';
 import 'package:exam_corrector/domain/question_label.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
+import 'package:exam_corrector/marking/contracts.dart';
+import 'package:exam_corrector/marking/document_reader.dart';
+import 'package:exam_corrector/marking/marking_pipeline.dart';
+import 'package:exam_corrector/marking/script/page_reader.dart';
+import 'package:exam_corrector/marking/script/pages.dart';
+import 'package:exam_corrector/marking/marking_settings.dart';
+import 'package:exam_corrector/marking/stage_store.dart';
 import 'package:exam_corrector/models/question_result.dart';
-import 'package:exam_corrector/pipeline/alignment/label_boundary_detector.dart';
-import 'package:exam_corrector/pipeline/alignment/paper_question_aligner.dart';
-import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
-import 'package:exam_corrector/pipeline/document/page_analyzer.dart';
-import 'package:exam_corrector/pipeline/engines.dart';
-import 'package:exam_corrector/pipeline/exam_pipeline.dart';
-import 'package:exam_corrector/pipeline/layout/text_layer_region_detector.dart';
-import 'package:exam_corrector/pipeline/visual/visual_evidence_engine.dart';
+import 'package:exam_corrector/services/background_signals.dart';
+import 'package:exam_corrector/services/document_inspector.dart';
 import 'package:exam_corrector/services/file_picker_service.dart';
 import 'package:exam_corrector/services/pdf_service.dart';
+import 'package:exam_corrector/services/results/results_repository.dart';
+import 'package:exam_corrector/services/review/marking_standard_store.dart';
 import 'package:exam_corrector/services/settings_store.dart';
+import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
-const AppConfig configuredApp = AppConfig(
-  apiKey: 'test-key',
-  model: 'gemini-3.7-flash',
-  effort: 'high',
-  maxTokens: 32000,
-  developerMode: true,
-);
+const AppConfig configuredApp = AppConfig(developerMode: true);
+
+/// The model every fake run marks with, first in the marking job.
+const String fakeMarker = 'gemini/gemini-3.6-flash';
+
+/// The backup marker, used only on a backup run.
+const String fakeBackupMarker = 'gemini/gemini-3.7-flash';
+
+/// AI settings with a Gemini key and two marking models — nothing read from
+/// the environment or a real .env.
+AiSettings fakeAi({Map<String, String> values = const <String, String>{}}) => AiSettings.fromMap(<String, String>{
+      Providers.geminiKeyName: 'test-key',
+      ModelRole.marker.settingName: '$fakeMarker, $fakeBackupMarker',
+      ...values,
+    });
 
 const String answerPath = 'C:\\papers\\answers.pdf';
 const String secondPath = 'C:\\papers\\bailey.pdf';
@@ -110,44 +125,46 @@ class RecordingSettingsStore extends SettingsStore {
 
   final bool throwOnSave;
   String? saved;
-  String? savedModel;
-  String? savedFallbacks;
-  String? savedLayout;
   bool? savedDeveloperMode;
   double? savedReviewThreshold;
-  String? savedTheme;
+  bool? savedBackground;
   bool? savedSounds;
   double? savedTransparency;
   String? savedServerUrl;
   String? savedServerKey;
+  String? savedNvidia;
+  String? savedPrepModels;
+  String? savedReaderModels;
+  String? savedMarkerModels;
+  Map<String, String> savedServers = <String, String>{};
 
   @override
   Future<Map<String, String>> read() async => <String, String>{
         if (saved case final String key) SettingsStore.apiKeyField: key,
         if (savedServerUrl case final String url) SettingsStore.supabaseUrlField: url,
         if (savedServerKey case final String key) SettingsStore.supabaseAnonKeyField: key,
+        if (savedNvidia case final String key) SettingsStore.nvidiaKeyField: key,
+        if (savedPrepModels case final String models) SettingsStore.prepModelsField: models,
+        if (savedReaderModels case final String models) SettingsStore.readerModelsField: models,
+        if (savedMarkerModels case final String models) SettingsStore.markerModelsField: models,
+        ...savedServers,
       };
 
   @override
   Future<void> save({
     String? apiKey,
-    String? model,
-    String? fallbackModels,
-    bool? ocrEnabled,
-    String? trocrModel,
-    double? ocrThreshold,
-    bool? visionCrossCheck,
-    int? ocrDpi,
-    String? layoutEngine,
-    String? visionModel,
+    String? nvidiaKey,
+    String? prepModels,
+    String? readerModels,
+    String? markerModels,
     double? reviewThreshold,
-    bool? visualAnalysis,
+    bool? backgroundProcessing,
     bool? developerMode,
-    String? theme,
     bool? sounds,
     double? transparency,
     String? supabaseUrl,
     String? supabaseAnonKey,
+    Map<String, String> openModels = const <String, String>{},
   }) async {
     if (throwOnSave) throw const FileSystemException('disk full');
     if (supabaseUrl != null || supabaseAnonKey != null) {
@@ -155,18 +172,27 @@ class RecordingSettingsStore extends SettingsStore {
       savedServerKey = supabaseAnonKey ?? savedServerKey;
       return;
     }
-    if (theme != null || sounds != null || transparency != null) {
-      savedTheme = theme ?? savedTheme;
+    if (sounds != null || transparency != null) {
       savedSounds = sounds ?? savedSounds;
       savedTransparency = transparency ?? savedTransparency;
       return;
     }
-    if (apiKey != null) saved = apiKey.trim().isEmpty ? null : apiKey.trim();
-    if (model != null && model.trim().isNotEmpty) savedModel = model.trim();
-    if (fallbackModels != null) savedFallbacks = fallbackModels.trim();
-    savedLayout = layoutEngine ?? savedLayout;
+    String? kept(String? value, String? old) => value == null ? old : (value.trim().isEmpty ? null : value.trim());
+    saved = kept(apiKey, saved);
+    savedNvidia = kept(nvidiaKey, savedNvidia);
+    savedPrepModels = kept(prepModels, savedPrepModels);
+    savedReaderModels = kept(readerModels, savedReaderModels);
+    savedMarkerModels = kept(markerModels, savedMarkerModels);
+    openModels.forEach((String key, String value) {
+      if (value.trim().isEmpty) {
+        savedServers.remove(key);
+      } else {
+        savedServers[key] = value.trim();
+      }
+    });
     savedDeveloperMode = developerMode ?? savedDeveloperMode;
     savedReviewThreshold = reviewThreshold ?? savedReviewThreshold;
+    savedBackground = backgroundProcessing ?? savedBackground;
   }
 
   @override
@@ -222,7 +248,7 @@ class FakeInspector implements DocumentInspector {
 
 /// An artifact store that never touches the disk, so widget tests run under
 /// the test binding's fake clock.
-class MemoryArtifactStore extends ArtifactStore {
+class MemoryArtifactStore extends StageStore {
   MemoryArtifactStore() : super(Directory('/memory'));
 
   final Map<String, JsonMap> files = <String, JsonMap>{};
@@ -257,6 +283,14 @@ class FakePdf extends PdfService {
 
   @override
   Future<String> extractText(String path) async => 'Guidance from a PDF.';
+}
+
+/// Says no document has a text layer, so nothing opens a real PDF.
+class FakeDocuments extends DocumentReader {
+  const FakeDocuments();
+
+  @override
+  Future<String?> textIfPresent(String path) async => null;
 }
 
 /// The question paper every fake run uses: two questions of two marks.
@@ -296,112 +330,114 @@ class FakePaperExtractor implements QuestionPaperExtractor {
       paper;
 }
 
-/// Renders two pages without writing anything: no images, so nothing needs
+/// Renders one page without writing anything: no image, so nothing needs
 /// the disk.
-class FakeRenderer implements DocumentRenderer {
+class FakeRenderer extends PageRenderer {
   int calls = 0;
+
+  /// Every file rendered, in order.
+  final List<String> rendered = <String>[];
 
   @override
   String get fingerprint => 'fake-render';
 
   @override
-  Future<ExamDocument> render(
-    SelectedDocument document, {
-    required Directory outputDirectory,
-    StageProgress? onProgress,
+  Future<List<ExamPage>> render(
+    String pdfPath, {
+    required String documentId,
+    required Directory folder,
+    void Function(int done, int total)? onPage,
     CancellationToken? cancel,
   }) async {
     calls++;
-    onProgress?.call('Rendering page 1 of 1…', 0.5);
-    return ExamDocument(
-      documentId: document.contentHash,
-      role: document.role,
-      filePath: document.filePath,
-      fileName: document.fileName,
-      source: document.source,
-      pages: <ExamPage>[
-        ExamPage(
-          pageId: ExamPage.idFor(document.contentHash, 1),
-          pageNumber: 1,
-          width: 1000,
-          height: 1400,
-        ),
-      ],
-    );
+    rendered.add(pdfPath.split(RegExp(r'[\\/]')).last);
+    onPage?.call(1, 1);
+    return <ExamPage>[
+      ExamPage(pageId: ExamPage.idFor(documentId, 1), pageNumber: 1, width: 1000, height: 1400),
+    ];
   }
 }
 
-/// Two handwritten regions: an answer to each question.
-class FakeDetector implements RegionDetector {
-  @override
-  String get fingerprint => 'fake-detect';
-
-  @override
-  Future<RegionDetection> detect(
-    ExamDocument document,
-    List<ExamPage> pages, {
-    StageProgress? onProgress,
-    CancellationToken? cancel,
-  }) async {
-    return RegionDetection(pages: <ExamPage>[
-      for (final ExamPage page in pages)
-        page.copyWith(regions: <PageRegion>[
-          for (int i = 0; i < 2; i++)
-            PageRegion(
-              regionId: '${page.pageId}:r$i',
-              pageId: page.pageId,
-              pageNumber: page.pageNumber,
-              type: RegionType.handwrittenAnswer,
-              box: NormalizedBox(x: 0.1, y: 0.1 + i * 0.3, width: 0.8, height: 0.2),
-              confidence: 0.8,
-              readingOrder: i,
-            ),
-        ]),
-    ]);
-  }
-}
-
-class FakeRecognizer implements HandwritingRecognizer {
-  FakeRecognizer({this.texts = const <String>[
+/// Reads two handwritten answers on every page: one to each question.
+class FakePageReader extends PageReader {
+  FakePageReader({this.texts = const <String>[
     '1 The mitochondrion makes ATP.',
     '2 Because muscles need energy.',
-  ]});
+  ]}) : super(_NoModel(), models: const <String>['gemini/fake-reader']);
 
   final List<String> texts;
+  int calls = 0;
 
   @override
   String get fingerprint => 'fake-read';
 
   @override
-  Future<Map<String, HandwritingEvidence>> recognize(
-    ExamDocument document,
-    List<PageRegion> regions, {
-    Map<String, HandwritingReading> priorReadings = const <String, HandwritingReading>{},
-    StageProgress? onProgress,
+  Future<PageReadout> read(
+    List<ExamPage> pages, {
+    required Directory cropFolder,
+    void Function(String message)? onProgress,
     CancellationToken? cancel,
   }) async {
-    return <String, HandwritingEvidence>{
-      for (int i = 0; i < regions.length; i++)
-        regions[i].regionId: HandwritingEvidence(
+    calls++;
+    cancel?.throwIfCancelled();
+    final Map<String, HandwritingEvidence> handwriting = <String, HandwritingEvidence>{};
+    final List<ExamPage> read = <ExamPage>[];
+    for (final ExamPage page in pages) {
+      final List<PageRegion> regions = <PageRegion>[
+        for (int i = 0; i < texts.length; i++)
+          PageRegion(
+            regionId: '${page.pageId}:r$i',
+            pageId: page.pageId,
+            pageNumber: page.pageNumber,
+            type: RegionType.handwrittenAnswer,
+            box: NormalizedBox(x: 0.1, y: 0.1 + i * 0.3, width: 0.8, height: 0.2),
+            confidence: 0.8,
+            readingOrder: i,
+            origin: RegionOrigin.vision,
+          ),
+      ];
+      for (int i = 0; i < regions.length; i++) {
+        handwriting[regions[i].regionId] = HandwritingEvidence(
           regionId: regions[i].regionId,
           readings: <HandwritingReading>[
             HandwritingReading(
-              source: ReadingSource.trocr,
-              text: texts[i % texts.length],
+              source: ReadingSource.vision,
+              text: texts[i],
               confidence: 0.95,
               uncertainSpans: i == 0
-                  ? const <UncertainSpan>[
-                      UncertainSpan(text: 'ATP', confidence: 0.6, start: 26, end: 29),
-                    ]
+                  ? const <UncertainSpan>[UncertainSpan(text: 'ATP', confidence: 0.6, start: 26, end: 29)]
                   : const <UncertainSpan>[],
             ),
           ],
-        ),
-    };
+        );
+      }
+      read.add(page.copyWith(regions: regions));
+    }
+    return PageReadout(
+      pages: read,
+      handwriting: handwriting,
+      visuals: const <String, VisualEvidence>{},
+      models: <int, String>{for (final ExamPage page in pages) page.pageNumber: 'gemini/fake-reader'},
+    );
   }
 }
 
-/// Marks each answered question 1 out of 2, citing its first region.
+/// The page reader's model, never asked.
+class _NoModel implements ModelClient {
+  @override
+  bool get isAvailable => true;
+
+  @override
+  Future<ModelResponse> requestJson(
+    ModelRequest request, {
+    required List<String> models,
+    void Function(String message)? onProgress,
+    CancellationToken? cancel,
+  }) =>
+      throw StateError('The fake pipeline asks no model.');
+}
+
+/// Marks each answered question 1 out of 2, citing its last region.
 class FakeMarker implements MarkingEngine {
   FakeMarker({this.error, this.gate});
 
@@ -415,6 +451,9 @@ class FakeMarker implements MarkingEngine {
   final List<String> marked = <String>[];
   String? lastGuidance;
 
+  /// The models each call was allowed, in order.
+  final List<List<String>?> allowed = <List<String>?>[];
+
   @override
   String get fingerprint => 'fake-mark';
 
@@ -423,10 +462,13 @@ class FakeMarker implements MarkingEngine {
     List<MarkingTask> tasks, {
     required String guidance,
     required bool typedAnswerSheet,
+    String? judge,
+    List<String>? models,
     StageProgress? onProgress,
     CancellationToken? cancel,
   }) async {
     calls++;
+    allowed.add(models);
     lastGuidance = guidance;
     onProgress?.call('Marking questions…', 0.5);
     if (gate != null) await gate!.future;
@@ -452,7 +494,7 @@ class FakeMarker implements MarkingEngine {
                 : const <String>[],
             evidenceRegionIds: task.answer.regionIds,
             answerPages: task.answer.pages,
-            model: answered ? 'gemini-3.6-flash' : '',
+            model: answered ? models?.first ?? judge ?? fakeMarker : '',
             markingPoints: <MarkingPoint>[
               MarkingPoint(
                 id: 'MP1',
@@ -460,9 +502,7 @@ class FakeMarker implements MarkingEngine {
                 satisfied: answered,
                 marks: answered ? 1 : 0,
                 marksAvailable: 1,
-                evidenceRegionIds: answered
-                    ? <String>[task.answer.regionIds.last]
-                    : const <String>[],
+                evidenceRegionIds: answered ? <String>[task.answer.regionIds.last] : const <String>[],
               ),
               const MarkingPoint(
                 id: 'MP2',
@@ -478,70 +518,78 @@ class FakeMarker implements MarkingEngine {
   }
 }
 
-class FakeTextLayer implements TextLayerReader {
-  @override
-  Future<List<TextLayerPage>> read(String path) async => const <TextLayerPage>[];
-}
-
 /// A real pipeline over fake engines and an in-memory store.
-ExamPipeline fakePipeline({
-  required ArtifactStore store,
-  AppConfig Function()? config,
+MarkingPipeline fakePipeline({
+  required StageStore store,
+  AiSettings Function()? ai,
   FakeMarker? marker,
   FakeRenderer? renderer,
   QuestionPaperExtractor? paper,
-  HandwritingRecognizer? recognizer,
+  FakePageReader? reader,
 }) {
-  return ExamPipeline(
-    config: config ?? () => configuredApp,
+  final FakePageReader pages = reader ?? FakePageReader();
+  return MarkingPipeline(
+    settings: () => MarkingSettings(ai: (ai ?? fakeAi)()),
     store: store,
+    client: _NoModel(),
     renderer: renderer ?? FakeRenderer(),
-    textLayer: FakeTextLayer(),
-    pageAnalyzer: const DefaultPageAnalyzer(),
-    regionDetector: FakeDetector(),
-    textLayerDetector: TextLayerRegionDetector(FakeTextLayer()),
-    cropper: null,
-    recognizer: recognizer ?? FakeRecognizer(),
-    visuals: const VisualEvidenceEngine(),
-    visualFingerprint: 'none',
+    documents: const FakeDocuments(),
+    reader: (_) => pages,
     questionExtractor: paper ?? FakePaperExtractor(),
-    boundaries: const LabelBoundaryDetector(),
-    aligner: const PaperQuestionAligner(),
+    // Keys come only from what a test saves itself.
+    writeAnswerKeys: false,
     marker: marker ?? FakeMarker(),
-    pdf: const FakePdf(),
   );
 }
 
 /// A controller wired to fakes throughout.
 CorrectionController fakeController({
   AppConfig config = configuredApp,
+  AiSettings? ai,
   FakeMarker? marker,
   FakeFilePicker? picker,
   FakeInspector? inspector,
   RecordingSettingsStore? settings,
-  ArtifactStore? store,
+  StageStore? store,
   QuestionPaperExtractor? paper,
   SyllabusLibrary? syllabi,
   MarkingStandardStore? standards,
   ResultsRepository? results,
+  UsageMonitor? usage,
+  FakeRenderer? renderer,
+  FakePageReader? reader,
+  Future<({bool ok, String message})> Function(AiSettings ai, String model)? modelCheck,
+  DateTime Function()? clock,
+  BackgroundSignals? signals,
+  ProviderHealth? health,
 }) {
-  final ArtifactStore artifacts = store ?? MemoryArtifactStore();
+  final StageStore artifacts = store ?? MemoryArtifactStore();
+  final RecordingSettingsStore saved = settings ?? RecordingSettingsStore();
   late final CorrectionController controller;
   controller = CorrectionController(
     config: config,
+    ai: ai ?? fakeAi(),
     pipeline: () => fakePipeline(
       store: artifacts,
-      config: () => controller.config,
+      ai: () => controller.ai,
       marker: marker,
       paper: paper,
+      renderer: renderer,
+      reader: reader,
     ),
     inspector: inspector ?? FakeInspector(),
     filePicker: picker ?? FakeFilePicker(answerPath, questionPath),
-    settings: settings ?? RecordingSettingsStore(),
+    settings: saved,
     pdfService: const FakePdf(),
     syllabusLibrary: syllabi,
     standards: standards,
     results: results,
+    usage: usage,
+    modelCheck: modelCheck,
+    aiLoader: (SettingsStore store) async => AiSettings.fromMap(await store.read()),
+    clock: clock,
+    signals: signals ?? const NoBackgroundSignals(),
+    health: health,
   );
   return controller;
 }

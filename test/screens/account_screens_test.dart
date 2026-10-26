@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/app/app.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
-import 'package:exam_corrector/screens/account/server_dialog.dart';
+import 'package:exam_corrector/features/accounts/ui/server_dialog.dart';
 import 'package:exam_corrector/services/accounts/server_config.dart';
 import 'package:exam_corrector/state/app_session.dart';
 
@@ -241,7 +241,7 @@ void main() {
     expect(find.byKey(Key('remove-$newt')), findsOneWidget);
 
     // A teacher sees students only, and can take one out.
-    await tester.pageBack();
+    await tester.tap(find.byKey(const Key('toolbar-back')));
     await tester.pumpAndSettle();
     await tester.runAsync(session.signOut);
     await tester.pumpAndSettle();

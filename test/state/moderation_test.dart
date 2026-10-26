@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/moderation.dart';
 import 'package:exam_corrector/models/question_result.dart';
-import 'package:exam_corrector/pipeline/marking/answer_key.dart';
+import 'package:exam_corrector/marking/exam/answer_key.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
 import 'fakes.dart';

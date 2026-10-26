@@ -1,21 +1,24 @@
+import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
+import 'package:pdfrx/pdfrx.dart' show pdfrxFlutterInitialize;
 
+import 'package:exam_corrector/ai/ai_settings.dart';
+import 'package:exam_corrector/ai/llm_client.dart';
+import 'package:exam_corrector/ai/provider_health.dart';
+import 'package:exam_corrector/ai/usage.dart';
 import 'package:exam_corrector/app/app.dart';
 import 'package:exam_corrector/core/config/app_config.dart';
+import 'package:exam_corrector/marking/marking_pipeline.dart';
+import 'package:exam_corrector/marking/script/pages.dart';
+import 'package:exam_corrector/marking/stage_store.dart';
+import 'package:exam_corrector/services/window_chrome.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
-import 'package:exam_corrector/pipeline/pipeline_factory.dart';
-import 'package:exam_corrector/services/ai/gemini_model_client.dart';
-import 'package:exam_corrector/services/ai/model_client.dart';
-import 'package:exam_corrector/services/ai/model_usage.dart';
 import 'package:exam_corrector/services/accounts/account_repository.dart';
 import 'package:exam_corrector/services/accounts/server_config.dart';
 import 'package:exam_corrector/services/accounts/session_file.dart';
 import 'package:exam_corrector/services/accounts/supabase_account_repository.dart';
-import 'package:exam_corrector/services/ocr/sidecar_client.dart';
-import 'package:exam_corrector/services/ocr/sidecar_process_service.dart';
 import 'package:exam_corrector/services/results/results_repository.dart';
 import 'package:exam_corrector/services/results/session_results.dart';
 import 'package:exam_corrector/services/review/marking_standard_store.dart';
@@ -27,9 +30,12 @@ import 'package:exam_corrector/state/app_session.dart';
 import 'package:exam_corrector/state/appearance.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
-/// Entry point: configuration → engines → pipeline → controller → window.
+/// Entry point: configuration → AI client → pipeline → controller → window.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  unawaited(WindowChrome.watch());
+  // PDF pages are rendered inside the app with PDFium, bundled by pdfrx.
+  PageRenderer.initialize = pdfrxFlutterInitialize;
 
   final AppConfig config;
   try {
@@ -39,30 +45,23 @@ Future<void> main() async {
     return;
   }
 
-  // The controller owns the live configuration, so a change saved in Settings
-  // is picked up by the very next correction.
+  // Where each model runs and which models do each job. Reading it never
+  // fails: a setting that cannot be used is replaced by its default.
+  final AiSettings ai = await AiSettings.load();
+
+  // The controller owns the live settings, so a change saved in Settings is
+  // picked up by the very next correction.
   late final CorrectionController controller;
-  AppConfig liveConfig() => controller.config;
 
-  final SidecarProcessService process = SidecarProcessService(
-    externalEndpoint: () {
-      final String? url = liveConfig().ocrEndpoint;
-      if (url == null) return null;
-      return SidecarEndpoint(
-        baseUrl: Uri.parse(url.endsWith('/') ? url : '$url/'),
-        token: liveConfig().ocrToken ?? '',
-      );
-    },
-  );
-  final SidecarClient sidecar = SidecarClient(process: process);
-
-  // Every request to the model is counted, and a model out of quota is
-  // remembered until its allowance resets — shown to the teacher in the bar.
+  // Every request to a model is counted, and a model out of its allowance is
+  // remembered until it comes back — shown to the teacher in the bar.
   final Directory? support = SettingsStore.supportDirectory();
-  final ModelUsageMonitor usage = ModelUsageMonitor(
-    file: support == null ? null : File('${support.path}${Platform.pathSeparator}model-usage.json'),
+  final UsageMonitor usage = await UsageMonitor.ofApp(
+    dailyAllowance: (String model) => controller.ai.providers.of(model)?.dailyAllowance ?? false,
   );
-  await usage.load();
+  // Which of our own servers are unreachable (a stopped Kaggle notebook), so
+  // a run moves to the next model at once instead of asking a dead server.
+  final ProviderHealth health = ProviderHealth();
 
   // The results database — what students read and raise corrections in —
   // beside the cache. Opening it is quick; bringing in results published as
@@ -97,30 +96,36 @@ Future<void> main() async {
     localResults: results,
   );
 
-  // Read before the first frame so the window never opens in the wrong theme.
-  final Appearance appearance = Appearance();
-  await appearance.load();
+  // Read before the first frame so the bars never change look as it opens.
   final Transparency transparency = Transparency();
   await transparency.load();
 
-  // The only line that names a model provider.
-  final ModelClient models = GeminiModelClient(liveConfig, usage: usage);
+  // The one client for every model; which server a model goes to is decided
+  // by the start of its name (gemini/…, nvidia/…, server/…, ollama/…).
+  final LlmClient models = LlmClient(() => controller.ai, usage: usage, health: health);
 
-  final PipelineFactory pipelines = PipelineFactory(
-    config: liveConfig,
-    sidecar: sidecar,
-    models: models,
+  // The cache of every stage, under the application's per-user folder.
+  final StageStore store = StageStore(
+    Directory('${(support ?? Directory.systemTemp).path}${Platform.pathSeparator}cache'),
+    enabled: config.cacheEnabled,
+  );
+  final MarkingPipeline pipeline = MarkingPipeline(
+    settings: () => controller.markingSettings,
+    store: store,
+    client: models,
   );
 
   controller = CorrectionController(
     config: config,
-    pipeline: pipelines.build,
+    ai: ai,
+    pipeline: () => pipeline,
     // The teacher's syllabi, saved beside the cache; a layout the parser
     // cannot read is read by the model, once, when it is added.
     syllabusLibrary: SyllabusLibrary.standard(
-      structurer: ModelSyllabusStructurer(models, liveConfig),
+      structurer: ModelSyllabusStructurer(models, () => controller.markingSettings),
     ),
     usage: usage,
+    health: health,
     standards: support == null
         ? null
         : MarkingStandardStore(File('${support.path}${Platform.pathSeparator}marking-standards.json')),
@@ -129,32 +134,10 @@ Future<void> main() async {
   // Signing in or out changes whose requests the badge counts.
   session.addListener(controller.refreshRequests);
 
-  // The sidecar is a child process; leaving it running after the window closes
-  // would strand a multi-gigabyte Python process on the teacher's machine.
-  // Closing the window asks the app to exit on every desktop platform, and the
-  // sidecar is stopped first. A kill that skips all of this is covered by the
-  // sidecar itself, which exits when this process is gone.
-  // The binding keeps the listener registered for the life of the app.
-  AppLifecycleListener(
-    onExitRequested: () async {
-      await sidecar.dispose();
-      return AppExitResponse.exit;
-    },
-  );
-  // Dart cannot watch SIGTERM on Windows; elsewhere it is how a session
-  // logout or `kill` arrives.
-  if (!Platform.isWindows) {
-    ProcessSignal.sigterm.watch().listen((_) async {
-      await sidecar.dispose();
-      exit(0);
-    });
-  }
-
   runApp(ExamCorrectorApp(
     controller: controller,
     session: session,
     results: sessionResults,
-    appearance: appearance,
     transparency: transparency,
     showLaunch: true,
   ));

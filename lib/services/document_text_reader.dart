@@ -5,8 +5,8 @@ import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
 import 'package:exam_corrector/core/errors/app_exception.dart';
-import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
-import 'package:exam_corrector/pipeline/marking/teacher_key.dart';
+import 'package:exam_corrector/marking/stage_store.dart';
+import 'package:exam_corrector/marking/exam/teacher_key/teacher_key.dart';
 import 'package:exam_corrector/services/pdf_service.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_reader.dart';
 
@@ -41,7 +41,7 @@ class DocumentTextReader {
         .join('\n')
         .trim();
     if (cleaned.isEmpty) throw const AnswerKeyException('No text could be read from this answer key.');
-    return TeacherKeySource(fileName: name, hash: await ArtifactStore.hashFile(file), text: cleaned);
+    return TeacherKeySource(fileName: name, hash: await StageStore.hashFile(file), text: cleaned);
   }
 
   Future<String> _fromPdf(String path) async {

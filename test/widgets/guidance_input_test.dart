@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:exam_corrector/widgets/guidance_input.dart';
+import 'package:exam_corrector/features/exam_setup/ui/guidance_input.dart';
 
 void main() {
   Future<void> pump(

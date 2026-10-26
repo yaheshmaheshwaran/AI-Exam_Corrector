@@ -1,92 +1,68 @@
-// Which models can this key use right now?
+// Which models can be used right now, through the application's own client?
 //
-//   dart run tool/quota_probe.dart              # every model in the chain
-//   dart run tool/quota_probe.dart <model> …    # specific models
+//   dart run tool/quota_probe.dart              # the first model of each job
+//   dart run tool/quota_probe.dart <model> …    # specific models, e.g.
+//                                               # gemini/gemini-3.1-flash-lite
+//                                               # nvidia/moonshotai/kimi-k3
+//                                               # ollama/qwen2.5:1.5b
 //
 // Sends one tiny request per model, so it costs one request from each model's
-// daily allowance. A diagnostic, not something the application runs.
-import 'dart:convert';
+// allowance, and counts it where the application does. A diagnostic, not
+// something the application runs.
 import 'dart:io';
 
-import 'package:http/http.dart' as http;
-
-import 'package:exam_corrector/core/config/app_config.dart';
-import 'package:exam_corrector/core/constants/app_constants.dart';
+import 'package:exam_corrector/ai/ai_settings.dart';
+import 'package:exam_corrector/ai/llm_client.dart';
+import 'package:exam_corrector/ai/model_request.dart';
+import 'package:exam_corrector/ai/model_roles.dart';
+import 'package:exam_corrector/ai/providers.dart';
+import 'package:exam_corrector/ai/usage.dart';
+import 'package:exam_corrector/core/errors/app_exception.dart';
 
 Future<void> main(List<String> args) async {
-  final AppConfig config = await AppConfig.load();
-  if (!config.hasApiKey) {
-    stderr.writeln('No API key resolved.');
-    exit(1);
+  final AiSettings settings = await AiSettings.load();
+  for (final String warning in settings.warnings) {
+    stdout.writeln('Setting ignored: $warning');
   }
+  final UsageMonitor usage = await UsageMonitor.ofApp(
+    dailyAllowance: (String model) => settings.providers.of(model)?.dailyAllowance ?? false,
+  );
+  // One model at a time, so each verdict is that model's own.
+  final LlmClient client = LlmClient(() => settings.copyWith(retries: 0), usage: usage);
 
-  final List<String> models = args.isNotEmpty ? args : config.modelChain;
-  stdout.writeln('Checking ${models.length} model(s) with the configured key.');
-  stdout.writeln('');
+  final List<String> models = args.isNotEmpty
+      ? args
+      : <String>{for (final ModelRole role in ModelRole.values) settings.roles.chain(role).first}.toList();
+  stdout.writeln('Checking ${models.length} model(s).\n');
 
   for (final String model in models) {
-    final String verdict = await _check(config.apiKey!, model);
-    stdout.writeln('${model.padRight(26)} $verdict');
-  }
-
-  stdout.writeln('');
-  stdout.writeln('Daily free-tier allowances reset at midnight Pacific time.');
-}
-
-Future<String> _check(String apiKey, String model) async {
-  final http.Response response;
-  try {
-    response = await http.post(
-      Uri.parse(AppConstants.apiEndpoint),
-      headers: <String, String>{
-        'content-type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: jsonEncode(<String, Object?>{
-        'model': model,
-        'store': false,
-        'input': 'Reply with the single word OK.',
-        'generation_config': <String, Object?>{'max_output_tokens': 2000},
-      }),
-    );
-  } on IOException catch (error) {
-    return 'unreachable ($error)';
-  }
-
-  if (response.statusCode == 200) return 'ok — quota available';
-
-  final String detail = _message(response.body);
-  switch (response.statusCode) {
-    case 429:
-      final RegExp limit = RegExp(r'limit:\s*(\d+)');
-      final RegExp retry = RegExp(r'retry in ([0-9.]+)s', caseSensitive: false);
-      final String? cap = limit.firstMatch(detail)?.group(1);
-      final String? wait = retry.firstMatch(detail)?.group(1);
-      return 'EXHAUSTED'
-          '${cap == null ? '' : ' — limit $cap'}'
-          '${wait == null ? '' : ', retry in ${double.parse(wait).ceil()}s'}';
-    case 404:
-      return 'not available to this key';
-    case 401:
-    case 403:
-      return 'key rejected — $detail';
-    default:
-      return '${response.statusCode} — $detail';
-  }
-}
-
-String _message(String body) {
-  try {
-    final Object? decoded = jsonDecode(body);
-    if (decoded is Map<String, dynamic>) {
-      final Object? error = decoded['error'];
-      if (error is Map<String, dynamic> && error['message'] is String) {
-        final String message = error['message'] as String;
-        return message.length > 120 ? '${message.substring(0, 120)}…' : message;
-      }
+    final ModelProvider? provider = settings.providers.of(model);
+    final Stopwatch watch = Stopwatch()..start();
+    String verdict;
+    try {
+      final ModelResponse response = await client.requestJson(
+        const ModelRequest(
+          purpose: 'availability check',
+          systemInstruction: 'Answer exactly as asked.',
+          parts: <ContentPart>[TextPart('Reply with {"ok": true}.')],
+          schema: <String, Object?>{
+            'type': 'object',
+            'properties': <String, Object?>{
+              'ok': <String, Object?>{'type': 'boolean'},
+            },
+            'required': <String>['ok'],
+          },
+          maxTokens: 200,
+          effort: 'low',
+        ),
+        models: <String>[model],
+      );
+      verdict = 'OK in ${watch.elapsedMilliseconds} ms → ${response.payload}';
+    } on CorrectionException catch (error) {
+      verdict = 'NOT USABLE: ${error.message}';
     }
-  } on FormatException {
-    // Fall through to the raw body.
+    stdout.writeln('${model.padRight(40)} ${provider?.label ?? '?'}: $verdict');
   }
-  return body.length > 120 ? '${body.substring(0, 120)}…' : body;
+  await usage.saved;
+  stdout.writeln('\nGemini free allowances reset at midnight Pacific time.');
 }

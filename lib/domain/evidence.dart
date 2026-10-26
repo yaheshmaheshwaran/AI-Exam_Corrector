@@ -25,7 +25,6 @@ enum EvidenceBasis {
 /// Who produced a reading of a region.
 enum ReadingSource {
   textLayer('text layer'),
-  trocr('TrOCR'),
   vision('vision model'),
   teacher('teacher');
 
@@ -129,7 +128,7 @@ class HandwritingReading {
   final String text;
   final double confidence;
 
-  /// The model that produced it, e.g. `microsoft/trocr-large-handwritten`.
+  /// The model that produced it, e.g. `gemini/gemini-3.1-flash-lite`.
   final String engine;
   final List<UncertainSpan> uncertainSpans;
   final List<RecognizedLine> lines;
@@ -138,7 +137,7 @@ class HandwritingReading {
   final bool illegible;
 
   /// Whether this engine judged the writing struck through. Null when it was
-  /// not asked — TrOCR cannot tell — which is different from "no".
+  /// not asked, which is different from "no".
   final bool? crossedOut;
 
   JsonMap toJson() => <String, Object?>{
@@ -160,7 +159,7 @@ class HandwritingReading {
     final String? text = readRawString(json['text']);
     if (text == null) return null;
     return HandwritingReading(
-      source: readEnum(ReadingSource.values, json['source'], ReadingSource.trocr),
+      source: readEnum(ReadingSource.values, json['source'], ReadingSource.vision),
       text: text,
       confidence: readConfidence(json['confidence']),
       engine: readString(json['engine']) ?? '',
@@ -396,6 +395,9 @@ sealed class VisualEvidence {
           labels: readStringList(json['labels']),
           components: readStringList(json['components']),
           relationships: readStringList(json['relationships']),
+          diagramKind: readRawString(json['diagramKind']) ?? '',
+          nodes: readObjects(json['nodes'], DiagramNode.fromJson),
+          edges: readObjects(json['edges'], DiagramEdge.fromJson),
         ),
     };
   }
@@ -452,18 +454,139 @@ class DiagramEvidence extends VisualEvidence {
     this.labels = const <String>[],
     this.components = const <String>[],
     this.relationships = const <String>[],
+    this.diagramKind = '',
+    this.nodes = const <DiagramNode>[],
+    this.edges = const <DiagramEdge>[],
   }) : super(kind: RegionType.diagram);
 
   final List<String> labels;
   final List<String> components;
+
+  /// Relationships the nodes and edges cannot express, as short statements.
+  /// Diagrams analysed before the flow structure existed have only these.
   final List<String> relationships;
+
+  /// flowchart, block, circuit, figure or other; empty when not stated.
+  final String diagramKind;
+
+  /// The boxes of a flowchart or block diagram, as drawn.
+  final List<DiagramNode> nodes;
+
+  /// The connectors between [nodes], with their direction as drawn.
+  final List<DiagramEdge> edges;
+
+  /// Each edge as one line, "Sensor → Processor [Yes]".
+  List<String> get flow {
+    final Map<String, String> names = <String, String>{
+      for (final DiagramNode node in nodes) node.id: node.text.isEmpty ? node.id : node.text,
+    };
+    return <String>[for (final DiagramEdge edge in edges) edge.describe(names)];
+  }
 
   @override
   JsonMap _fields() => <String, Object?>{
         'labels': labels,
         'components': components,
         'relationships': relationships,
+        if (diagramKind.isNotEmpty) 'diagramKind': diagramKind,
+        if (nodes.isNotEmpty) 'nodes': <JsonMap>[for (final DiagramNode n in nodes) n.toJson()],
+        if (edges.isNotEmpty) 'edges': <JsonMap>[for (final DiagramEdge e in edges) e.toJson()],
       };
+}
+
+/// One box of a flowchart or block diagram.
+class DiagramNode {
+  const DiagramNode({required this.id, required this.text, this.shape = ''});
+
+  final String id;
+
+  /// What is written in it, verbatim.
+  final String text;
+
+  /// process, decision, terminal, io, block or other.
+  final String shape;
+
+  JsonMap toJson() => <String, Object?>{'id': id, 'text': text, 'shape': shape};
+
+  static DiagramNode? fromJson(JsonMap json) {
+    final String? id = readString(json['id']);
+    if (id == null) return null;
+    return DiagramNode(
+      id: id,
+      text: readRawString(json['text']) ?? '',
+      shape: readRawString(json['shape']) ?? '',
+    );
+  }
+}
+
+/// Which way a connector points, as drawn.
+enum ArrowDirection {
+  /// Arrowhead at [DiagramEdge.to].
+  forward,
+
+  /// Arrowhead at [DiagramEdge.from]: drawn against the listed order.
+  backward,
+
+  both,
+
+  /// A plain line or bus: connected, with no direction shown.
+  none;
+
+  static ArrowDirection parse(Object? value) {
+    final String text = (value is String ? value : '').trim().toLowerCase();
+    for (final ArrowDirection direction in values) {
+      if (direction.name == text) return direction;
+    }
+    return none;
+  }
+}
+
+/// One connector between two nodes.
+class DiagramEdge {
+  const DiagramEdge({
+    required this.from,
+    required this.to,
+    this.label = '',
+    this.arrow = ArrowDirection.forward,
+  });
+
+  final String from;
+  final String to;
+
+  /// Text on the connector, such as "Yes" or "No".
+  final String label;
+  final ArrowDirection arrow;
+
+  String describe(Map<String, String> names) {
+    final String a = names[from] ?? from;
+    final String b = names[to] ?? to;
+    final String tag = label.isEmpty ? '' : ' [$label]';
+    return switch (arrow) {
+      ArrowDirection.forward => '$a → $b$tag',
+      ArrowDirection.backward => '$b → $a$tag',
+      ArrowDirection.both => '$a ↔ $b$tag',
+      ArrowDirection.none => '$a — $b$tag (no arrowhead)',
+    };
+  }
+
+  JsonMap toJson() => <String, Object?>{
+        'from': from,
+        'to': to,
+        'label': label,
+        'arrow': arrow.name,
+      };
+
+  static DiagramEdge? fromJson(JsonMap json) {
+    final String? from = readString(json['from']);
+    final String? to = readString(json['to']);
+    if (from == null || to == null) return null;
+    return DiagramEdge(
+      from: from,
+      to: to,
+      label: readRawString(json['label']) ?? '',
+      arrow: ArrowDirection.parse(json['arrow']),
+    );
+  }
 }
 
 class GraphEvidence extends VisualEvidence {

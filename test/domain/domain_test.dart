@@ -28,6 +28,15 @@ void main() {
       expect(box.height, closeTo(0.2, 1e-9));
     });
 
+    test('an open model\'s x-first box reads the same page fractions', () {
+      final NormalizedBox box = NormalizedBox.fromXyxy(<int>[200, 100, 600, 300])!;
+      expect(box.x, closeTo(0.2, 1e-9));
+      expect(box.y, closeTo(0.1, 1e-9));
+      expect(box.width, closeTo(0.4, 1e-9));
+      expect(box.height, closeTo(0.2, 1e-9));
+      expect(NormalizedBox.fromXyxy(<int>[1, 2, 3]), isNull);
+    });
+
     test('reversed or out-of-range corners are repaired, empty boxes refused', () {
       final NormalizedBox box = NormalizedBox.fromBox2d(<int>[300, 600, 100, 1200])!;
       expect(box.right, closeTo(1, 1e-9));
@@ -144,7 +153,7 @@ void main() {
       agreement: 0.7,
       teacherText: 'fixed',
       readings: <HandwritingReading>[
-        HandwritingReading(source: ReadingSource.trocr, text: 'chloroplost', confidence: 0.6),
+        HandwritingReading(source: ReadingSource.vision, text: 'chloroplost', confidence: 0.6),
         HandwritingReading(
           source: ReadingSource.vision,
           text: 'chloroplast',
@@ -294,11 +303,19 @@ void main() {
           completedStages: <ProcessingStage>{ProcessingStage.rendering},
           failedStage: () => ProcessingStage.marking,
           error: () => 'quota',
+          elapsed: const Duration(seconds: 95),
         );
     final ProcessingJob again = ProcessingJob.fromJson(roundTrip(job.toJson()))!;
     expect(again.completedStages, <ProcessingStage>{ProcessingStage.rendering});
     expect(again.failedStage, ProcessingStage.marking);
     expect(again.error, 'quota');
+    expect(again.elapsed, const Duration(seconds: 95));
+
+    // A job saved before runs were timed still reads.
+    final ProcessingJob old = ProcessingJob.fromJson(roundTrip(
+      (job.toJson()..remove('elapsedMs')),
+    ))!;
+    expect(old.elapsed, isNull);
   });
 
   test('overall progress is weighted by stage and reaches 1 when done', () {

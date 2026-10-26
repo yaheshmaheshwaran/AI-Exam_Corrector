@@ -16,8 +16,7 @@ build/
 # Windows build output
 windows/flutter/ephemeral/
 
-# Python virtual environments: the superseded implementation in legacy_python/
-# and the handwriting OCR sidecar (see ocr_service/README.md).
+# Python virtual environments, for any lab script run in this folder.
 .venv/
 __pycache__/
 *.pyc
@@ -27,6 +26,3 @@ __pycache__/
 # fixture and is committed; this is just for looking at.
 sample/student_paper_handwritten.png
 
-# The sidecar's packaging output (ocr_service/packaging/build_sidecar.py).
-ocr_service/build/
-ocr_service/dist/

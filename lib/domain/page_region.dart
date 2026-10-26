@@ -24,7 +24,7 @@ enum RegionType {
 
   const RegionType(this.wireName, this.displayName);
 
-  /// The name used on the wire — by the sidecar and in model prompts.
+  /// The name used on the wire — in the reader's answers and in prompts.
   final String wireName;
 
   final String displayName;
@@ -81,7 +81,8 @@ enum RegionOrigin {
   /// Read from the PDF's own text layer — exact.
   textLayer,
 
-  /// Local computer-vision layout analysis in the sidecar.
+  /// Local computer-vision layout analysis (no longer produced; kept so
+  /// results saved by earlier versions still read).
   local,
 
   /// The vision model's page analysis.

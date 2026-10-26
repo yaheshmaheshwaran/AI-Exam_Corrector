@@ -1,5 +1,11 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+
+import 'package:exam_corrector/ai/model_roles.dart';
+import 'package:exam_corrector/app/observable_listenable.dart';
+import 'package:exam_corrector/core/utils/duration_format.dart';
 import 'package:exam_corrector/domain/exam_assessment.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/marking_standard.dart';
@@ -7,38 +13,42 @@ import 'package:exam_corrector/domain/question_paper.dart';
 import 'package:exam_corrector/domain/syllabus.dart';
 import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/published_result.dart';
-import 'package:exam_corrector/screens/inspector/page_inspector_screen.dart';
-import 'package:exam_corrector/screens/requests/requests_screen.dart';
-import 'package:exam_corrector/screens/students/student_status_screen.dart';
-import 'package:exam_corrector/screens/results/question_detail_screen.dart';
+import 'package:exam_corrector/features/results/ui/page_inspector_screen.dart';
+import 'package:exam_corrector/features/accounts/ui/requests_screen.dart';
+import 'package:exam_corrector/features/accounts/ui/student_status_screen.dart';
+import 'package:exam_corrector/features/results/ui/question_detail_screen.dart';
 import 'package:exam_corrector/domain/processing_job.dart';
 import 'package:exam_corrector/services/export/report_exporter.dart';
 import 'package:exam_corrector/services/ui_sound.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_library.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
-import 'package:exam_corrector/widgets/answer_key_dialog.dart';
-import 'package:exam_corrector/widgets/answer_key_section.dart';
-import 'package:exam_corrector/widgets/moderation_chip.dart';
-import 'package:exam_corrector/pipeline/marking/answer_key.dart';
-import 'package:exam_corrector/widgets/class_results_view.dart';
-import 'package:exam_corrector/widgets/guidance_input.dart';
-import 'package:exam_corrector/widgets/marking_standard_dialog.dart';
-import 'package:exam_corrector/widgets/model_usage_indicator.dart';
-import 'package:exam_corrector/widgets/pdf_upload.dart';
-import 'package:exam_corrector/widgets/processing_panel.dart';
-import 'package:exam_corrector/widgets/results_view.dart';
-import 'package:exam_corrector/widgets/settings_dialog.dart';
-import 'package:exam_corrector/widgets/syllabus_library_dialog.dart';
-import 'package:exam_corrector/widgets/syllabus_section.dart';
-import 'package:exam_corrector/widgets/ui/ui.dart';
+import 'package:exam_corrector/features/exam_setup/ui/answer_key_dialog.dart';
+import 'package:exam_corrector/features/exam_setup/ui/answer_key_section.dart';
+import 'package:exam_corrector/features/marking_style/ui/moderation_chip.dart';
+import 'package:exam_corrector/marking/exam/answer_key.dart';
+import 'package:exam_corrector/features/results/ui/class_results_view.dart';
+import 'package:exam_corrector/features/exam_setup/ui/guidance_input.dart';
+import 'package:exam_corrector/features/marking_style/ui/marking_standard_dialog.dart';
+import 'package:exam_corrector/features/marking_run/ui/model_usage_indicator.dart';
+import 'package:exam_corrector/features/exam_setup/ui/pdf_upload.dart';
+import 'package:exam_corrector/features/marking_run/ui/processing_panel.dart';
+import 'package:exam_corrector/features/results/ui/results_view.dart';
+import 'package:exam_corrector/features/settings/ui/settings_dialog.dart';
+import 'package:exam_corrector/features/syllabus/ui/syllabus_library_dialog.dart';
+import 'package:exam_corrector/features/syllabus/ui/syllabus_section.dart';
+import 'package:exam_corrector/shared/ui/ui.dart';
 
 part 'publish_dialogs.dart';
 part 'result_actions.dart';
 part 'setup_rail.dart';
-part 'top_bar.dart';
 
-/// The main window: a top bar, the setup rail beside the results, and a
-/// status line.
+/// The main window: the navigation rail down the left, the place chosen in
+/// it beside the rail, and a status line along the foot.
+///
+/// Marking is the setup column beside the results. Students and Requests
+/// open beside the rail too, and so does anything opened from them — a
+/// question's evidence, the page inspector — so the rail is always there.
+/// Syllabi and Settings open as dialogs.
 ///
 /// The screen owns no marking logic. It collects input, calls the controller,
 /// shows processing as it happens, and opens each question's evidence.
@@ -57,14 +67,21 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+/// The places in the rail that open beside it.
+enum _Place { marking, students, requests }
+
 class _HomeScreenState extends State<HomeScreen> {
   late final TextEditingController _guidanceField;
   bool _showingError = false;
 
   /// The pinned command's height in the narrow layout, measured, so the
   /// page scrolls clear of it.
-  double _stackedFoot = 96;
+  final ValueNotifier<double> _stackedFoot = ValueNotifier<double>(96);
   bool _wasProcessing = false;
+
+  /// Where the places beside the rail open, and which one is showing.
+  final GlobalKey<NavigatorState> _content = GlobalKey<NavigatorState>();
+  final _PlaceObserver _places = _PlaceObserver();
 
   @override
   void initState() {
@@ -80,6 +97,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
     _guidanceField.dispose();
+    _stackedFoot.dispose();
+    _places.dispose();
     super.dispose();
   }
 
@@ -108,6 +127,21 @@ class _HomeScreenState extends State<HomeScreen> {
     if (error != null && !_showingError) {
       _showingError = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _showError(error));
+    }
+  }
+
+  /// Opens [place] beside the rail, closing whatever was open there.
+  void _go(_Place place) {
+    final NavigatorState? content = _content.currentState;
+    if (content == null) return;
+    content.popUntil((Route<dynamic> route) => route.isFirst);
+    switch (place) {
+      case _Place.marking:
+        break;
+      case _Place.students:
+        StudentStatusScreen.open(content.context, widget.controller);
+      case _Place.requests:
+        RequestsScreen.open(content.context, widget.controller);
     }
   }
 
@@ -186,11 +220,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final AnswerKey? key = await controller.answerKey();
     final QuestionPaper? paper = controller.keyPaper;
     if (!mounted || paper == null) return;
-    final Map<String, String>? edits = await AnswerKeyDialog.show(context, paper: paper, key: key);
-    if (edits != null) await controller.saveAnswerKeyEdits(edits);
+    final ({String writer, bool checked})? ai = controller.aiKeyStatus;
+    final AnswerKeyReview? review = await AnswerKeyDialog.show(context, paper: paper, key: key, aiStatus: ai);
+    if (review != null) await controller.saveAnswerKeyEdits(review.edits, checked: ai == null ? null : review.checked);
   }
 
-    Future<void> _editStandard(CorrectionController controller) async {
+  Future<void> _editStandard(CorrectionController controller) async {
     final ({MarkingStandard standard, bool asDefault})? chosen = await MarkingStandardDialog.show(
       context,
       controller.markingStandard,
@@ -247,39 +282,29 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         children: <Widget>[
           Expanded(
-            child: ListenableBuilder(
-              listenable: controller,
-              // The workspace fills the window; the top bar floats over it,
-              // frosted, and what scrolls beneath shows softly through.
-              builder: (BuildContext context, _) => Stack(
-                children: <Widget>[
-                  Positioned.fill(child: _workflow(controller)),
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: Frosted(
-                      bottom: true,
-                      child: _TopBar(
-                    model: controller.config.model,
-                    hasApiKey: controller.config.hasApiKey,
-                    onSettings: () => SettingsDialog.show(context, controller),
-                    onSyllabi: controller.hasSyllabusLibrary
-                        ? () => SyllabusLibraryDialog.show(context, controller)
-                        : null,
-                    usage: controller.usage == null
-                        ? null
-                        : ModelUsageIndicator(config: controller.config, usage: controller.usage!),
-                    onSwitchRole: widget.onSwitchRole,
-                    account: widget.account,
-                    openRequests: controller.canPublish ? controller.openRequestCount : null,
-                    onRequests: controller.canPublish ? () => RequestsScreen.open(context, controller) : null,
-                    onStudents: controller.canPublish ? () => StudentStatusScreen.open(context, controller) : null,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                ListenableBuilder(
+                  listenable: Listenable.merge(<Listenable>[controller, _places]),
+                  builder: (BuildContext context, _) => _rail(controller),
+                ),
+                Expanded(
+                  // The places beside the rail, and whatever they open.
+                  child: Navigator(
+                    key: _content,
+                    observers: <NavigatorObserver>[_places],
+                    onGenerateRoute: (RouteSettings settings) => PageRouteBuilder<void>(
+                      settings: const RouteSettings(name: 'marking'),
+                      transitionDuration: Duration.zero,
+                      pageBuilder: (BuildContext page, _, _) => ListenableBuilder(
+                        listenable: Listenable.merge(<Listenable>[controller, _stackedFoot]),
+                        builder: (BuildContext page, _) => _workflow(controller, page),
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
           _StatusFooter(controller: controller),
@@ -288,7 +313,70 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _workflow(CorrectionController controller) {
+  Widget _rail(CorrectionController controller) {
+    final _Place here = _places.place;
+    return AppRail(
+      items: <Widget>[
+        AppRailItem(
+          key: const Key('open-marking'),
+          icon: Icons.fact_check_outlined,
+          label: 'Marking',
+          selected: here == _Place.marking,
+          onPressed: () => _go(_Place.marking),
+        ),
+        if (controller.canPublish) ...<Widget>[
+          AppRailItem(
+            key: const Key('open-students'),
+            icon: Icons.groups_outlined,
+            label: 'Students',
+            tooltip: 'Where every student stands',
+            selected: here == _Place.students,
+            onPressed: () => _go(_Place.students),
+          ),
+          AppRailItem(
+            key: const Key('open-requests'),
+            icon: Icons.rate_review_outlined,
+            label: 'Requests',
+            tooltip: "Students' correction requests",
+            count: controller.openRequestCount,
+            selected: here == _Place.requests,
+            onPressed: () => _go(_Place.requests),
+          ),
+        ],
+        if (controller.hasSyllabusLibrary)
+          AppRailItem(
+            key: const Key('open-syllabi'),
+            icon: Icons.menu_book_outlined,
+            label: 'Syllabi',
+            tooltip: 'Syllabus library',
+            onPressed: () => SyllabusLibraryDialog.show(context, controller),
+          ),
+      ],
+      footer: <Widget>[
+        AppRailItem(
+          key: const Key('open-settings'),
+          icon: Icons.settings_outlined,
+          label: 'Settings',
+          onPressed: () => SettingsDialog.show(context, controller),
+        ),
+        if (widget.account case final Widget account)
+          account
+        else if (widget.onSwitchRole case final VoidCallback onSwitchRole)
+          AppRailItem(
+            key: const Key('switch-role'),
+            icon: Icons.login,
+            label: 'Sign in',
+            tooltip: 'Back to sign in',
+            onPressed: onSwitchRole,
+          ),
+      ],
+    );
+  }
+
+  /// Marking: the setup column beside the results, each under its own
+  /// floating toolbar. [page] is inside the place's navigator, so what the
+  /// results open appears beside the rail.
+  Widget _workflow(CorrectionController controller, BuildContext page) {
     final bool busy = controller.isBusy;
 
     final List<MarkedScript> scripts = controller.scripts;
@@ -303,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : null,
       isLoading: controller.isChoosing && controller.answerSheet == null,
       onChoose: busy ? null : controller.chooseAnswerSheet,
-      onAdd: busy || scripts.isEmpty ? null : controller.addAnswerSheets,
+      onAdd: controller.canAddScripts ? controller.addAnswerSheets : null,
     );
 
     final Widget questionPaper = PdfUpload(
@@ -381,7 +469,12 @@ class _HomeScreenState extends State<HomeScreen> {
       paperChosen: controller.questionPaper != null,
       onChoose: busy || controller.questionPaper == null || controller.isReadingKey ? null : controller.chooseAnswerKey,
       onRemove: busy || controller.isReadingKey ? null : controller.removeAnswerKey,
-      onReview: busy || controller.keyPaper == null ? null : () => _editAnswerKey(controller),
+      // A background run marks while the teacher checks the key: what they
+      // change is applied to the scripts it has already marked.
+      onReview: (busy && !controller.isBackgroundRun) || controller.keyPaper == null
+          ? null
+          : () => _editAnswerKey(controller),
+      aiKey: controller.aiKeyStatus,
     );
 
     final List<Widget> sections = <Widget>[
@@ -395,45 +488,51 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        // Below this the rail and the results no longer fit side by side:
-        // the rail goes above, and the page scrolls.
+        // Below this the setup column and the results no longer fit side by
+        // side: the setup goes above, and the page scrolls.
         final bool stacked = constraints.maxWidth < _sideBySideWidth;
         final double paneWidth =
-            constraints.maxWidth - 2 * AppTheme.pagePadding - (stacked ? 0 : _SetupRail.width);
-        final Widget results = _results(controller, compact: paneWidth < 760);
+            constraints.maxWidth - AppTheme.floatInset - (stacked ? AppTheme.floatInset : AppTheme.setupWidth);
+        final _ResultsPane pane = _results(controller, page, compact: paneWidth < 760);
+        final Widget card = AppCard(
+          expandChild: true,
+          padding: const EdgeInsets.all(AppTheme.pagePadding),
+          child: pane.body,
+        );
         if (stacked) {
           // Once there is something to show, it comes first: the inputs are
           // chosen by then. The command stays in reach at the foot.
           final bool resultsFirst =
               controller.isProcessing || controller.assessment != null || controller.showingClass;
-          final Widget pane = Padding(
-            padding: const EdgeInsets.all(AppTheme.pagePadding),
+          final Widget results = Padding(
+            padding: const EdgeInsets.fromLTRB(AppTheme.floatInset, 0, AppTheme.floatInset, AppTheme.floatInset),
             child: SizedBox(
               height: (constraints.maxHeight - 120).clamp(360.0, 640.0),
-              child: results,
+              child: card,
             ),
           );
-          final Widget rail = _SetupRail(sections: sections, action: const SizedBox.shrink(), scrolls: false);
-          // The page scrolls under the top bar and under the command,
-          // pinned and frosted at the foot.
+          final Widget setup = _SetupRail(sections: sections, action: const SizedBox.shrink(), scrolls: false);
+          // The page scrolls under the toolbar and under the command,
+          // pinned in floating glass at the foot.
           return Stack(
             children: <Widget>[
               Positioned.fill(
                 child: SingleChildScrollView(
-                  padding: EdgeInsets.only(top: _TopBar.height, bottom: _stackedFoot),
+                  padding: EdgeInsets.only(top: AppTheme.underBar, bottom: _stackedFoot.value),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: resultsFirst ? <Widget>[pane, rail] : <Widget>[rail, pane],
+                    children: resultsFirst ? <Widget>[results, setup] : <Widget>[setup, results],
                   ),
                 ),
               ),
+              Positioned(top: 0, left: 0, right: 0, child: pane.toolbar()),
               Positioned(
                 left: 0,
                 right: 0,
                 bottom: 0,
                 child: MeasureSize(
                   onSize: (Size size) {
-                    if (mounted && size.height != _stackedFoot) setState(() => _stackedFoot = size.height);
+                    if (mounted && size.height != _stackedFoot.value) _stackedFoot.value = size.height;
                   },
                   child: _RailFoot(action: action),
                 ),
@@ -446,18 +545,27 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             SizedBox(
-              width: _SetupRail.width,
-              child: _SetupRail(sections: sections, action: action, topInset: _TopBar.height),
+              width: AppTheme.setupWidth,
+              child: _SetupRail(sections: sections, action: action),
             ),
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppTheme.pagePadding,
-                  AppTheme.pagePadding + _TopBar.height,
-                  AppTheme.pagePadding,
-                  AppTheme.pagePadding,
-                ),
-                child: results,
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(0, AppTheme.underBar, AppTheme.floatInset, AppTheme.floatInset),
+                      child: card,
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: pane.toolbar(
+                      margin: const EdgeInsets.fromLTRB(0, AppTheme.floatInset, AppTheme.floatInset, 0),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -467,18 +575,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// The results pane: processing as it happens, the class, or one script.
-  Widget _results(CorrectionController controller, {required bool compact}) {
+  _ResultsPane _results(CorrectionController controller, BuildContext page, {required bool compact}) {
     final bool busy = controller.isBusy;
     final List<MarkedScript> scripts = controller.scripts;
     final ExamAssessment? assessment = controller.assessment;
     final int? position = controller.batchPosition;
+    // In a background run the class stays usable: the progress panel shows
+    // only for the script being marked, when the teacher opens it.
+    final bool watching = controller.isProcessing &&
+        (!controller.isBackgroundRun ||
+            (!controller.showingClass && (controller.currentScript?.processing ?? false)));
     Widget body;
-    final Widget? actions;
-    if (controller.isProcessing && controller.job == null) {
+    final List<Widget> actions;
+    if (watching && controller.job == null) {
       // Marking has started but nothing has been counted yet.
       body = const SkeletonRows(label: 'Starting to mark');
-      actions = null;
-    } else if (controller.isProcessing && controller.job != null) {
+      actions = const <Widget>[];
+    } else if (watching && controller.job != null) {
       // Only the panel follows the progress; the rest of the window waits
       // for the next stage.
       body = ListenableBuilder(
@@ -491,35 +604,33 @@ class _HomeScreenState extends State<HomeScreen> {
                   '${scripts[position - 1].document.fileName}',
         ),
       );
-      actions = null;
+      actions = const <Widget>[];
     } else if (controller.showingClass) {
+      final DateTime? backAt = controller.markingBackAt;
       body = ClassResultsView(
         scripts: scripts,
         onOpen: controller.openScript,
         onRemove: busy ? null : controller.removeScript,
         marksLookHigh: controller.classMarksLookHigh,
         agreement: controller.agreement,
+        markingBackAt: backAt,
+        lastRun: controller.lastRun,
       );
       final bool anyMarked = scripts.any((MarkedScript s) => s.result != null);
-      actions = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (controller.canPublish) ...<Widget>[
-            OutlinedButton.icon(
-              key: const Key('publish-class'),
-              onPressed: anyMarked && !busy ? () => _publishClass(controller) : null,
-              icon: const Icon(Icons.campaign_outlined, size: 16),
-              label: const Text('Publish to students'),
-            ),
-            const SizedBox(width: 8),
-          ],
+      actions = <Widget>[
+        if (controller.canPublish)
           OutlinedButton.icon(
-            onPressed: anyMarked ? controller.exportClass : null,
-            icon: const Icon(Icons.download_outlined, size: 16),
-            label: const Text('Export class…'),
+            key: const Key('publish-class'),
+            onPressed: anyMarked && !busy ? () => _publishClass(controller) : null,
+            icon: const Icon(Icons.campaign_outlined, size: 16),
+            label: const Text('Publish to students'),
           ),
-        ],
-      );
+        OutlinedButton.icon(
+          onPressed: anyMarked ? controller.exportClass : null,
+          icon: const Icon(Icons.download_outlined, size: 16),
+          label: const Text('Export class…'),
+        ),
+      ];
     } else {
       body = ResultsView(
         emptyDetail: _EmptyChecklist(
@@ -541,47 +652,41 @@ class _HomeScreenState extends State<HomeScreen> {
         pendingCorrections: controller.hasPendingCorrections,
         onRemark: controller.canCorrect ? controller.startCorrection : null,
         onOpenQuestion: (String questionId) =>
-            QuestionDetailScreen.open(context, controller, questionId),
+            QuestionDetailScreen.open(page, controller, questionId),
       );
-      final Widget? resultActions = assessment == null
-          ? null
-          : _ResultActions(
-              assessment: assessment,
-              compact: compact,
-              developerMode: controller.config.developerMode,
-              onExport: assessment.result == null ? null : _export,
-              onInspect: () => PageInspectorScreen.open(context, assessment),
-              onPublish: !controller.canPublish || assessment.result == null || busy
-                  ? null
-                  : () => _publish(controller),
-              publishBlocker: controller.currentScript == null
-                  ? null
-                  : controller.publishBlocker(controller.currentScript!),
-            );
-      actions = !controller.isClass
-          ? resultActions
-          : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                TextButton.icon(
-                  onPressed: controller.showClass,
-                  icon: const Icon(Icons.arrow_back, size: 14),
-                  label: const Text('All scripts'),
-                ),
-                ?resultActions,
-              ],
-            );
+      actions = <Widget>[
+        if (controller.isClass)
+          TextButton.icon(
+            onPressed: controller.showClass,
+            icon: const Icon(Icons.arrow_back, size: 14),
+            label: const Text('All scripts'),
+          ),
+        if (assessment != null)
+          _ResultActions(
+            assessment: assessment,
+            compact: compact,
+            developerMode: controller.config.developerMode,
+            onExport: assessment.result == null ? null : _export,
+            onInspect: () => PageInspectorScreen.open(page, assessment),
+            onPublish: !controller.canPublish || assessment.result == null || busy
+                ? null
+                : () => _publish(controller),
+            publishBlocker: controller.currentScript == null
+                ? null
+                : controller.publishBlocker(controller.currentScript!),
+          ),
+      ];
     }
 
     // What the pane shows changes with a short fade, not a jump.
-    final String showing = controller.isProcessing
+    final String showing = watching
         ? (controller.job == null ? 'starting' : 'processing')
         : controller.showingClass
             ? 'class'
             : 'script-${identityHashCode(assessment)}';
-    final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final bool still = MediaQuery.maybeDisableAnimationsOf(page) ?? false;
     body = AnimatedSwitcher(
-      duration: still ? Duration.zero : const Duration(milliseconds: 160),
+      duration: still ? Duration.zero : AppMotion.normal,
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
       layoutBuilder: (Widget? current, List<Widget> previous) =>
@@ -589,25 +694,92 @@ class _HomeScreenState extends State<HomeScreen> {
       child: KeyedSubtree(key: ValueKey<String>(showing), child: body),
     );
 
-    return AppCard(
-      divided: true,
-      expandChild: true,
-      padding: const EdgeInsets.all(AppTheme.pagePadding),
-      title: controller.isProcessing
+    return _ResultsPane(
+      title: watching
           ? 'Marking'
           : controller.showingClass
               ? 'Class results'
               : controller.isClass && controller.answerSheet != null
                   ? controller.answerSheet!.fileName
                   : 'Correction result',
-      subtitle: controller.isProcessing || controller.showingClass || assessment == null
+      subtitle: watching || controller.showingClass || assessment == null
           ? null
           : _ResultActions.summary(assessment),
-      trailing: actions,
-      child: body,
+      actions: actions,
+      body: body,
     );
   }
 
-  /// Below this width the rail and the results stack.
-  static const double _sideBySideWidth = 960;
+  /// Below this width the setup column and the results stack.
+  static const double _sideBySideWidth = 880;
+}
+
+/// The results pane's parts: its toolbar's title and actions, and its body.
+class _ResultsPane {
+  const _ResultsPane({required this.title, required this.subtitle, required this.actions, required this.body});
+
+  final String title;
+  final String? subtitle;
+  final List<Widget> actions;
+  final Widget body;
+
+  AppToolbar toolbar({EdgeInsets? margin}) => AppToolbar(
+        key: const Key('results-toolbar'),
+        title: title,
+        subtitle: subtitle,
+        actions: actions,
+        margin: margin ?? const EdgeInsets.fromLTRB(AppTheme.floatInset, AppTheme.floatInset, AppTheme.floatInset, 0),
+      );
+}
+
+/// Which place beside the rail is showing: the nearest one to the top of
+/// the places' navigator, whatever has been opened from it since.
+class _PlaceObserver extends NavigatorObserver with ChangeNotifier {
+  final List<Route<dynamic>> _stack = <Route<dynamic>>[];
+
+  _Place get place {
+    for (final Route<dynamic> route in _stack.reversed) {
+      switch (route.settings.name) {
+        case StudentStatusScreen.routeName:
+          return _Place.students;
+        case RequestsScreen.routeName:
+          return _Place.requests;
+      }
+    }
+    return _Place.marking;
+  }
+
+  void _changed() {
+    // Navigators report while they build; the rail follows once they have.
+    SchedulerBinding.instance.addPostFrameCallback((_) => notifyListeners());
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _stack.add(route);
+    _changed();
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _stack.remove(route);
+    _changed();
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _stack.remove(route);
+    _changed();
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    final int at = oldRoute == null ? -1 : _stack.indexOf(oldRoute);
+    if (at >= 0 && newRoute != null) {
+      _stack[at] = newRoute;
+    } else if (newRoute != null) {
+      _stack.add(newRoute);
+    }
+    _changed();
+  }
 }

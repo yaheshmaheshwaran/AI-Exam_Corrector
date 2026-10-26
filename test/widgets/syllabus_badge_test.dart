@@ -13,12 +13,12 @@ import 'package:exam_corrector/models/correction_result.dart';
 import 'package:exam_corrector/models/published_result.dart';
 import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/services/export/report_exporter.dart';
-import 'package:exam_corrector/widgets/marking_standard_dialog.dart';
-import 'package:exam_corrector/widgets/results_view.dart';
-import 'package:exam_corrector/widgets/syllabus_badge.dart';
+import 'package:exam_corrector/features/marking_style/ui/marking_standard_dialog.dart';
+import 'package:exam_corrector/features/results/ui/results_view.dart';
+import 'package:exam_corrector/features/syllabus/ui/syllabus_badge.dart';
 
 import '../models/section_totals_test.dart' show marked, paper;
-import '../pipeline/pipeline_fakes.dart';
+import '../marking/marking_fakes.dart';
 
 const SyllabusAward matchAward = SyllabusAward(
   badge: SyllabusBadge.exact,

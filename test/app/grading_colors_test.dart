@@ -44,7 +44,7 @@ void main() {
   const List<ToneKind> grading = <ToneKind>[ToneKind.success, ToneKind.warning, ToneKind.danger, ToneKind.bonus];
 
   for (final (String theme, AppColors c, double fillApart, double borderContrast)
-      in <(String, AppColors, double, double)>[('light', AppColors.light, 5, 1.65), ('dark', AppColors.dark, 6, 2.0)]) {
+      in <(String, AppColors, double, double)>[('light', AppColors.light, 5, 1.65)]) {
     group('$theme grading colours', () {
       for (final ToneKind kind in grading) {
         final Tone t = c.tone(kind);

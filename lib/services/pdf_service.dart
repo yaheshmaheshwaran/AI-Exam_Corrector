@@ -1,12 +1,10 @@
 import 'dart:io';
-import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
 import 'package:exam_corrector/core/constants/app_constants.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
-import 'package:exam_corrector/pipeline/engines.dart';
 
 /// What a quick look at a PDF established.
 class PdfInspection {
@@ -26,7 +24,7 @@ class PdfInspection {
 /// Deliberately isolated from the UI and from the AI layer: this service turns
 /// a path on disk into text — whole pages, or positioned lines — or throws
 /// [PdfExtractionException] with a message that is safe to show a teacher. It
-/// cannot render a page; that is the sidecar's job.
+/// cannot render a page; that is `lib/marking/script/pages.dart`'s job.
 class PdfService {
   const PdfService();
 
@@ -74,12 +72,6 @@ class PdfService {
   Future<PdfInspection> inspect(String path) async {
     final Uint8List bytes = await _readValidatedFile(path);
     return compute(_inspect, bytes);
-  }
-
-  /// Every page's text lines with their positions, in PDF points.
-  Future<List<TextLayerPage>> readTextLines(String path) async {
-    final Uint8List bytes = await _readValidatedFile(path);
-    return compute(_textLines, bytes);
   }
 
   Future<Uint8List> _readValidatedFile(String path) async {
@@ -213,54 +205,6 @@ PdfInspection _inspect(Uint8List bytes) {
       }
     }
     return PdfInspection(pageCount: pageCount, textLayerPages: textPages);
-  } on PdfExtractionException {
-    rethrow;
-  } on Exception catch (error) {
-    throw PdfExtractionException('This PDF could not be read: $error');
-  } finally {
-    document?.dispose();
-  }
-}
-
-/// Runs on a background isolate.
-List<TextLayerPage> _textLines(Uint8List bytes) {
-  PdfDocument? document;
-  try {
-    document = _open(bytes);
-    final PdfTextExtractor extractor = PdfTextExtractor(document);
-    final List<TextLayerPage> pages = <TextLayerPage>[];
-    for (int index = 0; index < document.pages.count; index++) {
-      final Size size = document.pages[index].size;
-      List<TextLine> lines;
-      try {
-        lines = extractor.extractTextLines(
-          startPageIndex: index,
-          endPageIndex: index,
-        );
-      } on Exception {
-        // One unreadable page costs that page's text, not the document.
-        lines = <TextLine>[];
-      }
-      pages.add(
-        TextLayerPage(
-          pageNumber: index + 1,
-          width: size.width,
-          height: size.height,
-          lines: <TextLayerLine>[
-            for (final TextLine line in lines)
-              if (line.text.trim().isNotEmpty)
-                TextLayerLine(
-                  text: line.text.trim(),
-                  left: line.bounds.left,
-                  top: line.bounds.top,
-                  width: line.bounds.width,
-                  height: line.bounds.height,
-                ),
-          ],
-        ),
-      );
-    }
-    return pages;
   } on PdfExtractionException {
     rethrow;
   } on Exception catch (error) {

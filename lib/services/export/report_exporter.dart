@@ -16,6 +16,7 @@ class ClassReportRow {
     required this.result,
     required this.reviews,
     this.paper,
+    this.elapsed,
   });
 
   final String fileName;
@@ -26,6 +27,9 @@ class ClassReportRow {
 
   /// The question paper it was marked against, for its sections.
   final QuestionPaper? paper;
+
+  /// How long marking the script took; null when not known.
+  final Duration? elapsed;
 
   List<SectionTotal> get sections {
     final CorrectionResult? marked = result;
@@ -112,6 +116,7 @@ class ReportExporter {
         'Percentage',
         'To review',
         'Changed by teacher',
+        'Marking time (s)',
         'Status',
       ].map(_cell).join(','));
 
@@ -122,7 +127,7 @@ class ReportExporter {
           row.fileName,
           for (int i = 0; i < ids.length; i++) '',
           for (int i = 0; i < sectionIds.length; i++) '',
-          '', '', '', '', '',
+          '', '', '', '', '', '',
           'not marked',
         ].map(_cell).join(','));
         continue;
@@ -141,6 +146,7 @@ class ReportExporter {
         formatPercentage(row.reviews.finalPercentage(result)),
         '${row.reviews.outstanding(result)}',
         '${row.reviews.overrideCount}',
+        '${row.elapsed?.inSeconds ?? ''}',
         'marked',
       ].map(_cell).join(','));
     }
@@ -279,6 +285,7 @@ class ReportExporter {
       'maximumMarks': result.maximumTotalMarks,
       'percentage': reviews.finalPercentage(result),
       'models': result.model,
+      'markingTimeMs': ?assessment.job.elapsed?.inMilliseconds,
       'sections': <Object?>[
         for (final SectionTotal section
             in SectionTotal.of(result, reviews, assessment.questionPaper))

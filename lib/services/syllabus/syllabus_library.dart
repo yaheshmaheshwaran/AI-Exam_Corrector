@@ -6,7 +6,7 @@ import 'package:exam_corrector/core/async/cancellation.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/domain/json_read.dart';
 import 'package:exam_corrector/domain/syllabus.dart';
-import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
+import 'package:exam_corrector/marking/stage_store.dart';
 import 'package:exam_corrector/services/settings_store.dart';
 import 'package:exam_corrector/services/syllabus/model_syllabus_structurer.dart';
 import 'package:exam_corrector/services/syllabus/syllabus_parser.dart';
@@ -40,7 +40,7 @@ class SyllabusLibrary {
   final SyllabusReader _reader;
   final SyllabusParser _parser;
 
-  /// Reads a syllabus the parser cannot, when an API key is set.
+  /// Reads a syllabus the parser cannot, when the AI is set up.
   final ModelSyllabusStructurer? structurer;
 
   /// The value that records "mark this paper without a syllabus".
@@ -77,7 +77,7 @@ class SyllabusLibrary {
     final File file = File(path);
     final String name = path.split(RegExp(r'[/\\]')).last;
     onProgress?.call('Reading the text of $name…');
-    final String source = await ArtifactStore.hashFile(file);
+    final String source = await StageStore.hashFile(file);
     final SyllabusText read = await _reader.readDocument(path);
     final String text = read.text;
     final List<PictureSlide> pictures = read.pictureSlides;
@@ -122,7 +122,7 @@ class SyllabusLibrary {
     } else if (pictures.isNotEmpty) {
       notes.add('${pictures.length == 1 ? 'Slide $slideList is a picture' : 'Slides $slideList are pictures'}'
           ' and ${pictures.length == 1 ? "wasn't" : "weren't"} read'
-          '${modelReady ? ' — the file holds several courses' : ' — add an API key in Settings and add the file again to read ${pictures.length == 1 ? 'it' : 'them'}'}.');
+          '${modelReady ? ' — the file holds several courses' : ' — set up the AI in Settings and add the file again to read ${pictures.length == 1 ? 'it' : 'them'}'}.');
     }
     cancel?.throwIfCancelled();
     courses = courses.where((ParsedSyllabus c) => c.hasUnits).toList();
@@ -130,9 +130,9 @@ class SyllabusLibrary {
       throw SyllabusException(
         pictures.isNotEmpty && !modelReady
             ? 'The syllabus in this file is in pictures (slides $slideList), which '
-                'need the AI to read. Add an API key in Settings, then add the file again.'
+                'need the AI to read. Set up the AI in Settings, then add the file again.'
             : 'No units or topics could be found in this file. Check that it is the '
-                'course syllabus${modelReady ? '' : ', or add an API key in Settings so an unusual layout can be read by the model'}.',
+                'course syllabus${modelReady ? '' : ', or set up the AI in Settings so an unusual layout can be read by the model'}.',
       );
     }
 

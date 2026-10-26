@@ -9,12 +9,9 @@ enum ProcessingStage {
   uploaded('Ready to process'),
   extractingQuestions('Reading the question paper'),
   rendering('Rendering pages'),
-  analyzingPages('Analysing pages'),
-  detectingRegions('Detecting regions'),
-  recognizingHandwriting('Recognising handwriting'),
+  readingPages('Reading the pages'),
   aligningQuestions('Matching answers to questions'),
-  analyzingVisuals('Analysing diagrams, graphs, tables and equations'),
-  reconstructingAnswers('Reconstructing answers'),
+  reconstructingAnswers('Cleaning up the answers'),
   marking('Marking'),
   reviewRequired('Marked — teacher review required'),
   completed('Completed'),
@@ -25,15 +22,15 @@ enum ProcessingStage {
 
   final String label;
 
-  /// The stages that do work, in the order they run.
+  /// The stages that do work, in the order they run. Whole pages are read
+  /// in one pass, so there is no separate region, handwriting or visual stage;
+  /// a job saved by an older version with one of those names reads back as
+  /// [uploaded].
   static const List<ProcessingStage> pipeline = <ProcessingStage>[
     extractingQuestions,
     rendering,
-    analyzingPages,
-    detectingRegions,
-    recognizingHandwriting,
+    readingPages,
     aligningQuestions,
-    analyzingVisuals,
     reconstructingAnswers,
     marking,
   ];
@@ -43,16 +40,13 @@ enum ProcessingStage {
         _ => false,
       };
 
-  /// Share of the whole job each working stage accounts for. Rendering,
-  /// recognition and marking dominate on a real script.
+  /// Share of the whole job each working stage accounts for, on a real
+  /// script: reading the pages and marking are the long waits.
   double get weight => switch (this) {
         extractingQuestions => 0.05,
         rendering => 0.12,
-        analyzingPages => 0.03,
-        detectingRegions => 0.15,
-        recognizingHandwriting => 0.25,
+        readingPages => 0.53,
         aligningQuestions => 0.02,
-        analyzingVisuals => 0.1,
         reconstructingAnswers => 0.02,
         marking => 0.26,
         _ => 0,
@@ -158,6 +152,8 @@ class ProcessingJob {
     this.failedStage,
     this.warnings = const <String>[],
     this.updatedAt,
+    this.durations = const <ProcessingStage, Duration>{},
+    this.elapsed,
   });
 
   /// `<answer sheet hash>_<question paper hash>`: the same pair of files is
@@ -177,6 +173,14 @@ class ProcessingJob {
   final ProcessingStage? failedStage;
   final List<String> warnings;
   final DateTime? updatedAt;
+
+  /// How long each finished stage took in this run — the measure for making
+  /// marking faster. A stage reused from the cache takes next to nothing.
+  final Map<ProcessingStage, Duration> durations;
+
+  /// How long this run has taken, start to finish — the wall time, so it
+  /// covers the waits between stages that [durations] leaves out.
+  final Duration? elapsed;
 
   /// Overall progress, 0..1, weighted by how long each stage typically takes.
   double get overallFraction {
@@ -206,6 +210,8 @@ class ProcessingJob {
     String? Function()? error,
     ProcessingStage? Function()? failedStage,
     List<String>? warnings,
+    Map<ProcessingStage, Duration>? durations,
+    Duration? elapsed,
   }) {
     return ProcessingJob(
       jobId: jobId,
@@ -219,6 +225,8 @@ class ProcessingJob {
       failedStage: failedStage == null ? this.failedStage : failedStage(),
       warnings: warnings ?? this.warnings,
       updatedAt: DateTime.now(),
+      durations: durations ?? this.durations,
+      elapsed: elapsed ?? this.elapsed,
     );
   }
 
@@ -234,6 +242,12 @@ class ProcessingJob {
         'failedStage': ?failedStage?.name,
         'warnings': warnings,
         'updatedAt': (updatedAt ?? DateTime.now()).toUtc().toIso8601String(),
+        if (durations.isNotEmpty)
+          'durationsMs': <String, int>{
+            for (final MapEntry<ProcessingStage, Duration> e in durations.entries)
+              e.key.name: e.value.inMilliseconds,
+          },
+        'elapsedMs': ?elapsed?.inMilliseconds,
       };
 
   static ProcessingJob? fromJson(JsonMap json) {
@@ -261,6 +275,17 @@ class ProcessingJob {
           : readEnum(ProcessingStage.values, failed, ProcessingStage.failed),
       warnings: readStringList(json['warnings']),
       updatedAt: DateTime.tryParse(readString(json['updatedAt']) ?? ''),
+      durations: <ProcessingStage, Duration>{
+        for (final MapEntry<String, Object?> e
+            in (readMap(json['durationsMs']) ?? const <String, Object?>{}).entries)
+          if (readInt(e.value) case final int ms)
+            readEnum(ProcessingStage.values, e.key, ProcessingStage.uploaded):
+                Duration(milliseconds: ms),
+      }..remove(ProcessingStage.uploaded),
+      elapsed: switch (readInt(json['elapsedMs'])) {
+        final int ms => Duration(milliseconds: ms),
+        null => null,
+      },
     );
   }
 }

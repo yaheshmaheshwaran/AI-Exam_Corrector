@@ -15,10 +15,10 @@ import 'package:exam_corrector/models/question_result.dart';
 import 'package:exam_corrector/models/section_totals.dart';
 import 'package:exam_corrector/services/export/report_exporter.dart';
 import 'package:exam_corrector/state/marked_script.dart';
-import 'package:exam_corrector/widgets/class_results_view.dart';
-import 'package:exam_corrector/widgets/results_view.dart';
+import 'package:exam_corrector/features/results/ui/class_results_view.dart';
+import 'package:exam_corrector/features/results/ui/results_view.dart';
 
-import '../pipeline/pipeline_fakes.dart';
+import '../marking/marking_fakes.dart';
 
 /// Section A: 1 [2], 2 [2]. Section B: 3 [10] OR 4 [10].
 final QuestionPaper paper = QuestionPaper(
@@ -142,6 +142,18 @@ void main() {
       final List<Object?> sections = json['sections']! as List<Object?>;
       expect(sections, hasLength(2));
       expect((sections.first! as Map<String, Object?>)['awarded'], 3);
+      // Not timed, so not claimed.
+      expect(json.containsKey('markingTimeMs'), isFalse);
+    });
+
+    test('the JSON says how long marking took', () {
+      final ExamAssessment timed = assessment().copyWith(
+        job: const ProcessingJob(jobId: 'job', stage: ProcessingStage.completed, elapsed: Duration(seconds: 84)),
+      );
+      final Map<String, Object?> json = jsonDecode(
+        exporter.export(timed, const TeacherReviewBook(), ReportFormat.json),
+      ) as Map<String, Object?>;
+      expect(json['markingTimeMs'], 84000);
     });
 
     test('the HTML heads each section with its total', () {
@@ -157,6 +169,22 @@ void main() {
       ]).trim().split('\n');
       expect(lines.first, contains('Section A (/4),Section B (/10),Total'));
       expect(lines[1], contains(',3,7,10,'));
+    });
+
+    test('the class CSV says how long each script took', () {
+      final List<String> lines = exporter.exportClass(<ClassReportRow>[
+        ClassReportRow(
+          fileName: 'amy.pdf',
+          result: result,
+          reviews: const TeacherReviewBook(),
+          paper: paper,
+          elapsed: const Duration(seconds: 47),
+        ),
+        const ClassReportRow(fileName: 'ben.pdf', result: null, reviews: TeacherReviewBook()),
+      ]).trim().split('\n');
+      expect(lines.first, endsWith('Changed by teacher,Marking time (s),Status'));
+      expect(lines[1], endsWith(',47,marked'));
+      expect(lines[2], endsWith(',,not marked'));
     });
   });
 

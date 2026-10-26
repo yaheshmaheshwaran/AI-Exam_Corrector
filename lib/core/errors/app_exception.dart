@@ -55,7 +55,30 @@ class CorrectionException extends AppException {
     this.retryAfter,
     this.quotaExhausted = false,
     this.dailyQuota = false,
+    this.modelUnavailable = false,
+    this.truncated = false,
+    this.quotaLimit,
+    this.unreachable = false,
   });
+
+  /// True when the server could not be reached at all — not running, its
+  /// tunnel closed, no network. Another model may serve the request, and the
+  /// server is skipped until it is seen to answer again.
+  final bool unreachable;
+
+  /// The allowance the provider said was reached ("limit: 20"), when it did:
+  /// shown to the teacher so a spent free tier is not a mystery.
+  final int? quotaLimit;
+
+  /// True when the answer was cut off at the output limit. Asking for less
+  /// at once — fewer questions, fewer pages — succeeds where retrying would
+  /// not.
+  final bool truncated;
+
+  /// True when this model cannot be used at all with this key — retired,
+  /// renamed, or not offered on the key's plan. Retrying is pointless, but
+  /// another model may well serve the request.
+  final bool modelUnavailable;
 
   /// True when what ran out is the model's allowance for the day — which
   /// comes back only when the provider resets it, not in a minute.
@@ -78,21 +101,6 @@ class CorrectionException extends AppException {
 /// The AI response cannot be trusted to display as marks.
 class ResultValidationException extends AppException {
   const ResultValidationException(super.message);
-}
-
-/// Handwriting recognition failed.
-///
-/// Separate from [PdfExtractionException] because the remedy is different: a
-/// PDF problem is about the file the teacher chose, whereas this is usually
-/// about the OCR sidecar — not installed, not started, or unable to reach its
-/// model weights on a first run.
-class OcrException extends AppException {
-  const OcrException(super.message, {this.sidecarUnavailable = false});
-
-  /// True when the sidecar could not be started or reached at all, as opposed
-  /// to failing on this particular document. The UI points the teacher at the
-  /// installation instructions rather than at their scan.
-  final bool sidecarUnavailable;
 }
 
 /// The teacher cancelled processing. Not a failure: everything finished so far

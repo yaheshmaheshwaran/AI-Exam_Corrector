@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:exam_corrector/app/app.dart';
 import 'package:exam_corrector/models/published_result.dart';
 import 'package:exam_corrector/screens/home/home_screen.dart';
-import 'package:exam_corrector/screens/students/student_status_screen.dart';
+import 'package:exam_corrector/features/accounts/ui/student_status_screen.dart';
 import 'package:exam_corrector/services/results/results_repository.dart';
 import 'package:exam_corrector/state/app_session.dart';
 import 'package:exam_corrector/state/correction_controller.dart';

@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:exam_corrector/domain/json_read.dart';
 import 'package:exam_corrector/domain/teacher_review.dart';
-import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
+import 'package:exam_corrector/marking/stage_store.dart';
 
 /// Persists what the teacher decided: mark reviews, transcription fixes, and
 /// which writing answers which question.
@@ -13,7 +13,7 @@ import 'package:exam_corrector/pipeline/cache/artifact_store.dart';
 class TeacherWorkStore {
   const TeacherWorkStore(this._store);
 
-  final ArtifactStore _store;
+  final StageStore _store;
 
   static String _reviewsKey(String paperHash) => 'teacher-reviews-$paperHash';
   static const String _correctionsKey = 'teacher-transcriptions';
@@ -67,6 +67,7 @@ class TeacherWorkStore {
   static const String _answerKeyEditsKey = 'answer-key-edits';
   static const String _moderationKey = 'moderation';
   static const String _teacherKeyKey = 'teacher-key';
+  static const String _answerKeyCheckedKey = 'answer-key-checked';
 
   /// The answer key the paper was last marked against, as the pipeline
   /// saved it.
@@ -87,6 +88,15 @@ class TeacherWorkStore {
   Future<void> saveAnswerKeyEdits(String paperHash, Map<String, String> edits) =>
       _store.write(paperHash, _answerKeyEditsKey, Map<String, Object?>.of(edits));
 
+  /// Which AI key the teacher has checked, by its [AnswerKey.aiFingerprint];
+  /// null when none. A key the AI writes again is a different key, unchecked.
+  Future<String?> answerKeyChecked(String paperHash) async =>
+      readString((await _read(paperHash, _answerKeyCheckedKey))?['fingerprint']);
+
+  Future<void> saveAnswerKeyChecked(String paperHash, String? fingerprint) => fingerprint == null
+      ? _store.remove(paperHash, _answerKeyCheckedKey)
+      : _store.write(paperHash, _answerKeyCheckedKey, <String, Object?>{'fingerprint': fingerprint});
+
   /// The teacher's own answer key for the paper, as read and matched.
   Future<JsonMap?> teacherKey(String paperHash) => _read(paperHash, _teacherKeyKey);
 
@@ -94,7 +104,7 @@ class TeacherWorkStore {
 
   Future<void> removeTeacherKey(String paperHash) async {
     await _store.remove(paperHash, _teacherKeyKey);
-    if (!_store.enabled) await ArtifactStore(_store.root).remove(paperHash, _teacherKeyKey);
+    if (!_store.enabled) await StageStore(_store.root).remove(paperHash, _teacherKeyKey);
   }
 
   /// The teacher's marks the paper is moderated by, and the moderation in
@@ -107,7 +117,7 @@ class TeacherWorkStore {
   /// teacher's record, not a cache.
   Future<JsonMap?> _read(String hash, String key) async {
     if (_store.enabled) return _store.read(hash, key);
-    return ArtifactStore(_store.root).read(hash, key);
+    return StageStore(_store.root).read(hash, key);
   }
 
   Directory get root => _store.root;

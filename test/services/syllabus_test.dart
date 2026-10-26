@@ -256,7 +256,7 @@ DFA – NFA
       final File letter = File('${dir.path}/letter.txt')..writeAsStringSync('Dear students, see you Monday.');
       await expectLater(
         library.add(letter.path),
-        throwsA(isA<SyllabusException>().having((SyllabusException e) => e.message, 'message', contains('API key'))),
+        throwsA(isA<SyllabusException>().having((SyllabusException e) => e.message, 'message', contains('set up the AI'))),
       );
       expect(await library.list(), isEmpty);
     });

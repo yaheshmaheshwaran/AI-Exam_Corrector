@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:exam_corrector/app/app_colors.dart';
 import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/services/ui_sound.dart';
-import 'package:exam_corrector/widgets/ui/app_logo.dart';
+import 'package:exam_corrector/shared/ui/app_logo.dart';
 
 /// Shows the [LaunchScreen] over the app while it opens, then gets out of the
 /// way. The app is built underneath from the first frame, so the opening
@@ -139,7 +139,6 @@ class _LaunchScreenState extends State<LaunchScreen> with TickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
-    final AppColors colors = context.colors;
     final ThemeData theme = Theme.of(context);
     return Listener(
       behavior: HitTestBehavior.opaque,
@@ -155,7 +154,9 @@ class _LaunchScreenState extends State<LaunchScreen> with TickerProviderStateMix
             return Opacity(
               opacity: ((1 - _exit.value) * (1 - _skip.value)).clamp(0.0, 1.0),
               child: Material(
-                color: colors.bg,
+                // The Warm mist's own ivory, so the window it fades into
+                // looks the same.
+                color: AppColors.backdropTop,
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,

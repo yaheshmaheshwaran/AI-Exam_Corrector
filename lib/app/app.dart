@@ -3,16 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:exam_corrector/app/app_colors.dart';
 import 'package:exam_corrector/app/app_text.dart';
 import 'package:exam_corrector/app/app_theme.dart';
-import 'package:exam_corrector/screens/account/account_menu.dart';
-import 'package:exam_corrector/screens/account/account_screen.dart';
-import 'package:exam_corrector/screens/account/pending_screen.dart';
+import 'package:exam_corrector/features/accounts/ui/account_menu.dart';
+import 'package:exam_corrector/features/accounts/ui/account_screen.dart';
+import 'package:exam_corrector/features/accounts/ui/pending_screen.dart';
 import 'package:exam_corrector/screens/home/home_screen.dart';
 import 'package:exam_corrector/screens/launch/launch_screen.dart';
-import 'package:exam_corrector/screens/student/student_screen.dart';
+import 'package:exam_corrector/features/accounts/ui/student_screen.dart';
 import 'package:exam_corrector/services/results/results_repository.dart';
 import 'package:exam_corrector/state/app_session.dart';
 import 'package:exam_corrector/state/appearance.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
+import 'package:exam_corrector/shared/ui/backdrop.dart';
 
 /// The application shell: signing in first, then the signed-in person's
 /// screen — marking for teachers and the college admin, results for
@@ -24,7 +25,6 @@ class ExamCorrectorApp extends StatelessWidget {
     required this.controller,
     this.session,
     this.results,
-    this.appearance,
     this.transparency,
     this.showLaunch = false,
   });
@@ -35,10 +35,7 @@ class ExamCorrectorApp extends StatelessWidget {
   /// app; off by default so tests start straight on the screen they check.
   final bool showLaunch;
 
-  /// Light, dark or system; without one the app follows the system.
-  final Appearance? appearance;
-
-  /// Whether pinned surfaces are frosted; frosted when absent.
+  /// Whether the floating glass blurs; it does when absent.
   final Transparency? transparency;
 
   /// Who is using the app; without one the app is the teacher's alone.
@@ -49,33 +46,20 @@ class ExamCorrectorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final AppSession? session = this.session;
-    final Appearance? appearance = this.appearance;
     final Transparency? transparency = this.transparency;
-    Widget app = appearance == null
-        ? _app(ThemeMode.system, session)
-        : AppearanceScope(
-            appearance: appearance,
-            child: ValueListenableBuilder<ThemeMode>(
-              valueListenable: appearance,
-              builder: (BuildContext context, ThemeMode mode, _) => _app(mode, session),
-            ),
-          );
-    if (transparency != null) app = TransparencyScope(transparency: transparency, child: app);
-    return app;
+    final Widget app = _app(session);
+    return transparency == null ? app : TransparencyScope(transparency: transparency, child: app);
   }
 
-  Widget _app(ThemeMode mode, AppSession? session) {
+  Widget _app(AppSession? session) {
     return MaterialApp(
       title: 'Marklume',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      themeMode: mode,
-      // Every frosted surface reads one shared backdrop, rather than each
-      // reading its own.
+      // The Warm mist lies under every screen and dialog, and every pane of
+      // glass reads one shared backdrop rather than each reading its own.
       builder: (BuildContext context, Widget? child) {
-        final Widget grouped = BackdropGroup(child: child ?? const SizedBox.shrink());
+        final Widget grouped = WarmMistBackdrop(child: BackdropGroup(child: child ?? const SizedBox.shrink()));
         return showLaunch ? LaunchOverlay(child: grouped) : grouped;
       },
       home: session == null
@@ -119,7 +103,7 @@ class StartupErrorApp extends StatelessWidget {
       title: 'Marklume',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
+      builder: (BuildContext context, Widget? child) => WarmMistBackdrop(child: child ?? const SizedBox.shrink()),
       home: Builder(
         builder: (BuildContext context) => Scaffold(
           body: Center(

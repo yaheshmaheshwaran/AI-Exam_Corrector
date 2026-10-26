@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:exam_corrector/core/config/app_config.dart';
+import 'package:exam_corrector/ai/ai_settings.dart';
+import 'package:exam_corrector/ai/usage.dart';
+
 import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
 import 'package:exam_corrector/domain/processing_job.dart';
@@ -80,13 +82,38 @@ void main() {
 
       await controller.startCorrection();
 
-      expect(stages, contains(ProcessingStage.recognizingHandwriting));
+      expect(stages, contains(ProcessingStage.readingPages));
       expect(stages, contains(ProcessingStage.marking));
       expect(controller.result!.questions.map((QuestionResult q) => q.questionId),
           <String>['Q1', 'Q2']);
       expect(controller.assessment!.answers['Q1']!.text, contains('mitochondrion'));
-      expect(controller.statusMessage, 'Marked 2 questions: 2 / 4 (50%). 1 need your review.');
+      expect(controller.statusMessage, startsWith('Marked 2 questions: 2 / 4 (50%). 1 need your review. Took '));
       expect(controller.isProcessing, isFalse);
+    });
+
+    test('times the run, start to finish', () async {
+      DateTime now = DateTime(2026, 10, 1, 9);
+      final FakeMarker marker = FakeMarker(gate: Completer<void>());
+      final CorrectionController controller = fakeController(marker: marker, clock: () => now);
+      await chooseBoth(controller);
+      expect(controller.runStartedAt, isNull);
+      expect(controller.lastRun, isNull);
+
+      final Future<void> run = controller.startCorrection();
+      await pumpEventQueue();
+      expect(controller.runStartedAt, DateTime(2026, 10, 1, 9));
+      now = now.add(const Duration(seconds: 30));
+      expect(controller.runTime, const Duration(seconds: 30));
+
+      now = now.add(const Duration(seconds: 42));
+      marker.gate!.complete();
+      await run;
+
+      expect(controller.runStartedAt, isNull);
+      expect(controller.runTime, Duration.zero);
+      expect(controller.lastRun, (took: const Duration(seconds: 72), scripts: 1));
+      expect(controller.statusMessage, endsWith('Took 1m 12s.'));
+      expect(controller.assessment!.job.elapsed, isNotNull);
     });
 
     test('passes the guidance to marking', () async {
@@ -319,42 +346,58 @@ void main() {
   });
 
   group('settings', () {
-    test('saves the key and page understanding options, and applies them', () async {
+    test('saves the keys, the models of each job and marking options, and applies them', () async {
       final RecordingSettingsStore settings = RecordingSettingsStore();
       final CorrectionController controller = fakeController(
         settings: settings,
-        config: const AppConfig(apiKey: null, model: 'm', effort: 'high', maxTokens: 1),
+        ai: AiSettings.fromMap(const <String, String>{}),
       );
-      expect(controller.statusIsError, isTrue);
+      expect(controller.statusIsError, isTrue, reason: 'no key yet');
 
       await controller.saveSettings(
-        apiKey: ' new-key ',
-        model: 'gemini-3.5-flash',
-        fallbackModels: '',
-        layoutEngine: LayoutEngine.vision,
-        visionModel: 'gemini-3.7-flash',
+        geminiKey: ' new-key ',
+        nvidiaKey: 'nvapi-1',
+        prepModels: 'nvidia/moonshotai/kimi-k3, gemini/gemini-3.5-flash',
+        markerModels: 'gemini/gemini-3.5-flash',
+        serverUrl: 'https://abc.trycloudflare.com/v1/',
         reviewThreshold: 0.8,
         developerMode: true,
       );
 
       expect(settings.saved, 'new-key');
-      expect(settings.savedLayout, 'vision');
-      expect(controller.config.apiKey, 'new-key');
-      expect(controller.config.layoutEngine, LayoutEngine.vision);
-      expect(controller.config.effectiveVisionModel, 'gemini-3.7-flash');
+      expect(settings.savedNvidia, 'nvapi-1');
+      expect(controller.ai.providers.byId('gemini')!.apiKey, 'new-key');
+      expect(controller.ai.roles.prep, <String>['nvidia/moonshotai/kimi-k3', 'gemini/gemini-3.5-flash']);
+      expect(controller.ai.roles.marker, <String>['gemini/gemini-3.5-flash']);
+      expect(controller.ai.providers.byId('server')!.baseUrl, 'https://abc.trycloudflare.com/v1');
       expect(controller.config.reviewThreshold, 0.8);
       expect(controller.config.developerMode, isTrue);
-      expect(controller.config.modelChain, <String>['gemini-3.5-flash']);
       expect(controller.statusIsError, isFalse);
+      expect(controller.statusMessage, contains('Gemini (gemini-3.5-flash)'));
+    });
+
+    test('a new key brings its own allowance: the old key\'s spent models come back', () async {
+      final UsageMonitor usage = UsageMonitor(dailyAllowance: (String model) => true);
+      const CorrectionException spent = CorrectionException('out', quotaExhausted: true, dailyQuota: true);
+      final CorrectionController controller = fakeController(usage: usage);
+      await controller.saveSettings(geminiKey: 'the-old-key');
+      usage.failed(usage.started(fakeMarker, 'marking'), spent);
+
+      await controller.saveSettings(reviewThreshold: 0.8);
+      expect(usage.isExhausted(fakeMarker), isTrue, reason: 'the key did not change');
+
+      await controller.saveSettings(geminiKey: 'a-new-key');
+      expect(usage.isExhausted(fakeMarker), isFalse);
     });
 
     test('a failure to save is reported, and the old settings stay', () async {
       final CorrectionController controller = fakeController(
         settings: RecordingSettingsStore(throwOnSave: true),
       );
-      await controller.saveSettings(apiKey: 'x', model: 'y');
+      await controller.saveSettings(geminiKey: 'x', markerModels: 'gemini/y');
       expect(controller.pendingError, contains('disk full'));
-      expect(controller.config.apiKey, 'test-key');
+      expect(controller.ai.providers.byId('gemini')!.apiKey, 'test-key');
+      expect(controller.ai.roles.marker.first, fakeMarker);
     });
   });
 }

@@ -5,10 +5,10 @@ import 'package:exam_corrector/domain/marking_standard.dart';
 import 'package:exam_corrector/domain/moderation.dart';
 import 'package:exam_corrector/domain/question_label.dart';
 import 'package:exam_corrector/domain/question_paper.dart';
-import 'package:exam_corrector/pipeline/marking/answer_key.dart';
-import 'package:exam_corrector/widgets/answer_key_dialog.dart';
-import 'package:exam_corrector/widgets/marking_standard_dialog.dart';
-import 'package:exam_corrector/widgets/moderation_chip.dart';
+import 'package:exam_corrector/marking/exam/answer_key.dart';
+import 'package:exam_corrector/features/exam_setup/ui/answer_key_dialog.dart';
+import 'package:exam_corrector/features/marking_style/ui/marking_standard_dialog.dart';
+import 'package:exam_corrector/features/marking_style/ui/moderation_chip.dart';
 
 void big(WidgetTester tester) {
   tester.view.physicalSize = const Size(1200, 1000);
@@ -88,7 +88,7 @@ void main() {
     });
     Map<String, String>? saved;
     await opener(tester, (BuildContext context) async {
-      saved = await AnswerKeyDialog.show(context, paper: paper, key: key);
+      saved = (await AnswerKeyDialog.show(context, paper: paper, key: key))?.edits;
     });
 
     expect(find.textContaining('Publish–subscribe [13]'), findsOneWidget);
@@ -108,6 +108,49 @@ void main() {
     await tester.pumpAndSettle();
     expect(saved!['Q12'], 'CoAP over UDP [13]');
     expect(saved!['Q11'], key.textFor('Q11'));
+  });
+
+  testWidgets("the answer key dialog says who wrote the AI's key and takes the teacher's check", (WidgetTester tester) async {
+    big(tester);
+    final QuestionPaper paper = QuestionPaper(
+      documentId: 'p',
+      questions: <Question>[
+        Question(label: QuestionLabel.parse('11')!, questionText: 'Explain MQTT.', maximumMarks: 13, marksStated: true),
+      ],
+    );
+    const AnswerKey key = AnswerKey(entries: <String, AnswerKeyEntry>{
+      'Q11': AnswerKeyEntry(questionId: 'Q11', maximum: 13, model: 'gemini-3.6-flash', points: <AnswerKeyPoint>[
+        AnswerKeyPoint(criterion: 'Publish–subscribe', marks: 13),
+      ]),
+    });
+    AnswerKeyReview? review;
+    await opener(tester, (BuildContext context) async {
+      review = await AnswerKeyDialog.show(context, paper: paper, key: key, aiStatus: (writer: 'Gemini', checked: false));
+    });
+
+    expect(find.text('AI key by Gemini'), findsOneWidget);
+    expect(find.textContaining('marking does not wait'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('answer-key-checked')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('answer-key-save')));
+    await tester.pumpAndSettle();
+
+    expect(review!.checked, isTrue);
+    expect(review!.edits['Q11'], key.textFor('Q11'));
+  });
+
+  testWidgets('with no AI key in use, nothing asks to be checked', (WidgetTester tester) async {
+    big(tester);
+    final QuestionPaper paper = QuestionPaper(
+      documentId: 'p',
+      questions: <Question>[
+        Question(label: QuestionLabel.parse('11')!, questionText: 'Explain MQTT.', maximumMarks: 13, marksStated: true),
+      ],
+    );
+    await opener(tester, (BuildContext context) async {
+      await AnswerKeyDialog.show(context, paper: paper);
+    });
+    expect(find.byKey(const Key('answer-key-checked')), findsNothing);
   });
 
   testWidgets('moderation: waiting, ready, in force', (WidgetTester tester) async {

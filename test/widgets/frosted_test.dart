@@ -5,10 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/app/app.dart';
 import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_glass.dart';
 import 'package:exam_corrector/app/app_theme.dart';
 import 'package:exam_corrector/services/settings_store.dart';
 import 'package:exam_corrector/state/appearance.dart';
-import 'package:exam_corrector/widgets/ui/frosted.dart';
+import 'package:exam_corrector/shared/ui/frosted.dart';
 
 import '../state/fakes.dart';
 
@@ -32,26 +33,35 @@ void main() {
       transparency: Transparency(store: RecordingSettingsStore())..value = strength,
       child: MediaQuery(
         data: media,
-        child: const Scaffold(body: Frosted(top: true, child: Text('Correct paper'))),
+        child: const Scaffold(body: Frosted(child: Text('Correct paper'))),
       ),
     ),
   );
 
-  /// The surface's own colour: the box around the content that carries one.
+  /// The pane's own colour, where it is clearest: the middle of its fill.
   Color glassColour(WidgetTester tester) => tester
       .widgetList<DecoratedBox>(find.ancestor(of: find.text('Correct paper'), matching: find.byType(DecoratedBox)))
-      .map((DecoratedBox box) => (box.decoration as BoxDecoration).color)
-      .whereType<Color>()
-      .first;
+      .map((DecoratedBox box) => box.decoration)
+      .whereType<BoxDecoration>()
+      .map((BoxDecoration d) => d.gradient)
+      .whereType<LinearGradient>()
+      .first
+      .colors[1];
 
-  testWidgets('frosts when transparency is up, more clearly the higher it is', (WidgetTester tester) async {
+  testWidgets('blurs when glass is on, more clearly the higher it is', (WidgetTester tester) async {
     await tester.pumpWidget(host(strength: 0.3));
     expect(find.byType(BackdropFilter), findsOneWidget);
     final double faint = glassColour(tester).a;
     await tester.pumpWidget(host(strength: 1));
     final double clear = glassColour(tester).a;
     expect(clear, lessThan(faint));
-    expect(clear, closeTo(Frosted.clearestLight, 0.01));
+    // Half white, and a little of the sheen over it.
+    expect(clear, closeTo(1 - (1 - AppGlass.barFill.a) * (1 - AppGlass.sheenMiddle), 0.01));
+  });
+
+  testWidgets('glass is on by default', (WidgetTester tester) async {
+    await tester.pumpWidget(MaterialApp(theme: AppTheme.light, home: const Scaffold(body: Frosted(child: Text('Correct paper')))));
+    expect(find.byType(BackdropFilter), findsOneWidget);
   });
 
   testWidgets('is solid when switched off, or the system asks for less motion or more contrast', (
@@ -63,12 +73,14 @@ void main() {
     expect(find.byType(BackdropFilter), findsNothing);
     await tester.pumpWidget(host(strength: 1, media: const MediaQueryData(highContrast: true)));
     expect(find.byType(BackdropFilter), findsNothing);
-    // Solid means the surface's own colour, fully opaque.
-    expect(glassColour(tester).a, 1);
+    // Solid means nearly opaque white: text never sits over a sharp
+    // picture of what is beneath.
+    expect(glassColour(tester).a, greaterThanOrEqualTo(AppGlass.solidFill.a));
   });
 
   test('text on glass stays readable over any blurred content beneath it', () {
-    for (final (AppColors c, bool dark) in <(AppColors, bool)>[(AppColors.light, false), (AppColors.dark, true)]) {
+    const AppColors c = AppColors.light;
+    {
       for (final (Color tint, bool tinted) in <(Color, bool)>[(c.surface, false), (c.primarySoft, true)]) {
         // Blurred content is at most half as dark (or light) as the
         // strongest colours the app draws, laid on the surface.
@@ -85,13 +97,9 @@ void main() {
           const Color(0xFFFFFFFF),
         ]) {
           final Color under = Color.lerp(tint, ink, 0.5)!;
-          final Color frost = _over(tint, Frosted.alphaFor(dark: dark, tinted: tinted, strength: 1), under);
-          // With the sheen at its brightest, as it is along the top.
-          final Color glass = Color.lerp(
-            frost,
-            const Color(0xFFFFFFFF),
-            dark ? Frosted.sheenDark : Frosted.sheenLight,
-          )!;
+          final Color frost = _over(tint, Frosted.alphaFor(tinted: tinted, strength: 1), under);
+          // Where the sheen is faintest, as it is through the middle.
+          final Color glass = Color.lerp(frost, const Color(0xFFFFFFFF), AppGlass.sheenMiddle)!;
           expect(_contrast(c.text, glass), greaterThanOrEqualTo(7), reason: 'text over $under');
           expect(_contrast(c.textMuted, glass), greaterThanOrEqualTo(4.5), reason: 'secondary text over $under');
           expect(_contrast(c.primary, glass), greaterThanOrEqualTo(4.5), reason: 'accent over $under');
@@ -115,7 +123,7 @@ void main() {
     expect(await loaded('nonsense'), Transparency.standard);
   });
 
-  testWidgets('the Settings slider changes glass at once, and Off is saved', (WidgetTester tester) async {
+  testWidgets('the Settings switch turns blur off at once, and Off is saved', (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final RecordingSettingsStore store = RecordingSettingsStore();
@@ -123,17 +131,14 @@ void main() {
     await tester.pumpWidget(ExamCorrectorApp(controller: fakeController(), transparency: transparency));
     expect(find.byType(BackdropFilter), findsWidgets);
 
-    await tester.tap(find.text('Settings'));
+    await tester.tap(find.byKey(const Key('open-settings')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('settings-transparency-value')), findsOneWidget);
-    expect(find.text('80%'), findsWidgets);
-
-    // Drag the slider all the way to Off.
-    await tester.drag(find.byKey(const Key('settings-transparency')), const Offset(-600, 0));
+    await tester.tap(find.byKey(const Key('settings-section-look')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settings-glass-blur')));
     await tester.pumpAndSettle();
     expect(transparency.value, 0);
     expect(store.savedTransparency, 0);
-    expect(find.text('Off'), findsWidgets);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();

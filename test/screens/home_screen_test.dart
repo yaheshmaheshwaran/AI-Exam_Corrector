@@ -1,12 +1,19 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:exam_corrector/ai/ai_settings.dart';
+import 'package:exam_corrector/ai/model_roles.dart';
+
+import 'package:exam_corrector/ai/usage.dart';
 import 'package:exam_corrector/app/app.dart';
-import 'package:exam_corrector/core/config/app_config.dart';
-import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/shared/ui/ui.dart';
+import 'package:exam_corrector/core/async/cancellation.dart';
 import 'package:exam_corrector/core/errors/app_exception.dart';
+import 'package:exam_corrector/models/question_result.dart';
+import 'package:exam_corrector/marking/contracts.dart';
 import 'package:exam_corrector/state/appearance.dart';
 import 'package:exam_corrector/state/correction_controller.dart';
 
@@ -31,6 +38,27 @@ Future<void> _sized(WidgetTester tester, [Size size = const Size(1280, 900)]) as
 }
 
 void main() {
+  testWidgets('the status bar floats in glass, its ends in line with the rail and the panes',
+      (WidgetTester tester) async {
+    await _sized(tester);
+    await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
+    await tester.pumpAndSettle();
+
+    final Finder bar = find.byKey(const Key('status-bar'));
+    final Rect frame = tester.getRect(bar);
+    const Size window = Size(1280, 900);
+    expect(find.descendant(of: bar, matching: find.byType(Frosted)), findsOneWidget);
+    expect(frame.height, AppTheme.statusHeight);
+    expect(frame.left, AppTheme.floatInset);
+    expect(frame.right, window.width - AppTheme.floatInset);
+    expect(frame.bottom, window.height - AppTheme.floatInset);
+    // Its left end meets the rail's, with the panes' gap above it.
+    final Rect rail = tester.getRect(find.descendant(of: find.byType(AppRail), matching: find.byType(Frosted)));
+    expect(rail.left, frame.left);
+    expect(frame.top - rail.bottom, AppTheme.floatInset);
+    expect(find.text('Ready.'), findsOneWidget);
+  });
+
   testWidgets('walks the teacher from upload to marks', (WidgetTester tester) async {
     await _sized(tester);
     await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
@@ -64,8 +92,8 @@ void main() {
     expect(find.text('Review'), findsOneWidget);
     expect(find.text('Total marks: 2 / 4'), findsOneWidget);
     expect(find.text('Percentage: 50%'), findsOneWidget);
-    expect(find.textContaining('Marked by gemini-3.6-flash'), findsOneWidget);
-    expect(find.text('Marked 2 questions: 2 / 4 (50%). 1 need your review.'), findsOneWidget);
+    expect(find.textContaining('Marked by $fakeMarker'), findsOneWidget);
+    expect(find.textContaining('Marked 2 questions: 2 / 4 (50%). 1 need your review. Took '), findsOneWidget);
   });
 
   testWidgets('opens a question with its evidence, and takes an override',
@@ -158,6 +186,8 @@ void main() {
     expect(find.text('Handwriting regions: 2'), findsOneWidget);
     expect(find.text('Pages'), findsOneWidget);
     expect(find.byKey(const Key('processing-progress')), findsOneWidget);
+    // The footer times the run while it goes.
+    expect(find.byKey(const Key('run-clock')), findsOneWidget);
 
     await tester.tap(find.text('Cancel').last);
     marker.gate!.complete();
@@ -165,6 +195,7 @@ void main() {
 
     expect(find.textContaining('resumes where it stopped'), findsOneWidget);
     expect(find.text('Current stage'), findsNothing);
+    expect(find.byKey(const Key('run-clock')), findsNothing);
   });
 
   testWidgets('shows a failure in a dialog', (WidgetTester tester) async {
@@ -193,6 +224,45 @@ void main() {
     // Everything read from the paper is kept, and marking can resume.
     expect(find.text('Not marked yet'), findsOneWidget);
     expect(find.text('Resume marking'), findsOneWidget);
+  });
+
+  testWidgets('with the first marker out of its allowance, the backup marks the paper and flags every mark',
+      (WidgetTester tester) async {
+    await _sized(tester);
+    final UsageMonitor usage = UsageMonitor(dailyAllowance: (String m) => true);
+    usage.modelFailed(
+      usage.started(fakeMarker, 'marking'),
+      fakeMarker,
+      const CorrectionException('No quota left.', quotaExhausted: true, dailyQuota: true),
+    );
+    final CorrectionController controller = fakeController(
+      marker: _FirstMarkerOut(),
+      usage: usage,
+    );
+    // The quota indicator ticks every second, so the screen never settles:
+    // pump for a while instead.
+    Future<void> settle() async {
+      for (int i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    await tester.pumpWidget(ExamCorrectorApp(controller: controller));
+    await settle();
+    await tester.runAsync(() async {
+      await controller.chooseAnswerSheet();
+      await controller.chooseQuestionPaper();
+      await controller.startCorrection();
+    });
+    await settle();
+
+    expect(controller.result, isNotNull);
+    expect(controller.result!.model, fakeBackupMarker);
+    expect(
+      controller.result!.questions.where((QuestionResult q) => q.model.isNotEmpty).every((QuestionResult q) => q.needsReview),
+      isTrue,
+    );
+    expect(find.text('Not marked yet'), findsNothing);
   });
 
   testWidgets('reports an unreadable file before any processing', (WidgetTester tester) async {
@@ -285,36 +355,83 @@ void main() {
   });
 
   group('settings', () {
-    testWidgets('warns when no key is set, then accepts one', (WidgetTester tester) async {
+    testWidgets('warns when no key is set, then accepts one and the models of each job', (WidgetTester tester) async {
       await _sized(tester, const Size(1200, 1000));
       final RecordingSettingsStore store = RecordingSettingsStore();
       final CorrectionController controller = fakeController(
-        config: const AppConfig(apiKey: null, model: 'gemini-3.7-flash', effort: 'high', maxTokens: 32000),
+        ai: AiSettings.fromMap(const <String, String>{}),
         settings: store,
       );
       await tester.pumpWidget(ExamCorrectorApp(controller: controller));
 
-      expect(find.text('No API key set — open Settings to add one.'), findsOneWidget);
+      expect(find.text(AiSettings.notReadyMessage), findsOneWidget);
 
       await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();
       expect(find.text('Gemini API key'), findsOneWidget);
+      expect(find.text('NVIDIA API key'), findsOneWidget);
       expect(find.text('in-memory settings'), findsOneWidget);
-      expect(find.text('Page understanding'), findsOneWidget);
-
+      // Marking options are a section of their own; what was typed is kept
+      // while moving between sections.
       await tester.enterText(find.byKey(const Key('settings-api-key')), 'a-typed-key');
-      await tester.enterText(find.byKey(const Key('settings-model')), 'gemini-3.5-flash');
-      await tester.enterText(find.byKey(const Key('settings-fallback-models')),
-          'gemini-3.5-flash-lite, gemini-3.7-flash');
+      await tester.tap(find.byKey(const Key('settings-section-marking')));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark in the background'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('settings-section-models')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('settings-models-marker')), 'gemini/gemini-3.5-flash, gemini/gemini-3.7-flash');
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       expect(store.saved, 'a-typed-key');
-      expect(store.savedLayout, 'hybrid');
-      expect(controller.config.model, 'gemini-3.5-flash');
-      expect(controller.config.modelChain,
-          <String>['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.7-flash']);
-      expect(find.text('Settings saved. Ready to mark with gemini-3.5-flash.'), findsOneWidget);
+      expect(store.savedMarkerModels, 'gemini/gemini-3.5-flash, gemini/gemini-3.7-flash');
+      expect(controller.ai.roles.marker, <String>['gemini/gemini-3.5-flash', 'gemini/gemini-3.7-flash']);
+      expect(find.text('Settings saved. Ready to mark with Gemini (gemini-3.5-flash).'), findsOneWidget);
+    });
+
+    testWidgets('checks the first model of every job, as typed', (WidgetTester tester) async {
+      await _sized(tester, const Size(1200, 1000));
+      final List<String> checked = <String>[];
+      final CorrectionController controller = fakeController(
+        settings: RecordingSettingsStore(),
+        modelCheck: (AiSettings ai, String model) async {
+          checked.add(model);
+          return (ok: !model.startsWith('nvidia/'), message: 'Checked $model.');
+        },
+      );
+      await tester.pumpWidget(ExamCorrectorApp(controller: controller));
+
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('settings-models-reader')), 'server/Qwen/Qwen3-VL-8B-Instruct');
+      await tester.ensureVisible(find.byKey(const Key('settings-test-connection')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-test-connection')));
+      await tester.pumpAndSettle();
+
+      expect(checked, <String>[ModelRoles.defaults.prep.first, 'server/Qwen/Qwen3-VL-8B-Instruct', fakeMarker]);
+      expect(find.text('Checked server/Qwen/Qwen3-VL-8B-Instruct.'), findsOneWidget);
+      expect(find.byKey(const Key('settings-test-result-prep')), findsOneWidget);
+    });
+
+    testWidgets('marking in the background is switched on and saved', (WidgetTester tester) async {
+      await _sized(tester);
+      final RecordingSettingsStore store = RecordingSettingsStore();
+      final CorrectionController controller = fakeController(settings: store);
+      await tester.pumpWidget(ExamCorrectorApp(controller: controller));
+
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-section-marking')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-background')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(store.savedBackground, isTrue);
+      expect(controller.config.backgroundProcessing, isTrue);
     });
 
     testWidgets('cancelling changes nothing', (WidgetTester tester) async {
@@ -330,43 +447,94 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(store.saved, isNull);
-      expect(controller.config.apiKey, configuredApp.apiKey);
+      expect(controller.ai.providers.byId('gemini')!.apiKey, 'test-key');
     });
   });
 
-  group('appearance', () {
-    for (final ThemeMode mode in <ThemeMode>[ThemeMode.light, ThemeMode.dark]) {
-      testWidgets('marks a paper in the ${mode.name} theme without overflow', (WidgetTester tester) async {
-        await _sized(tester);
-        final Appearance appearance = Appearance(store: RecordingSettingsStore())..value = mode;
-        await tester.pumpWidget(ExamCorrectorApp(controller: fakeController(), appearance: appearance));
-        await tester.pumpAndSettle();
+  group('look', () {
+    testWidgets('the setup column scrolls with no scrollbar beside it', (WidgetTester tester) async {
+      await _sized(tester, const Size(1280, 700));
+      await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
+      await tester.pumpAndSettle();
 
-        final BuildContext context = tester.element(find.text('Correction result'));
-        expect(context.colors, mode == ThemeMode.dark ? AppColors.dark : AppColors.light);
+      final Finder first = find.text("Student's answer sheet");
+      expect(find.ancestor(of: first, matching: find.byType(Scrollbar)), findsNothing);
+      expect(find.ancestor(of: first, matching: find.byType(RawScrollbar)), findsNothing);
 
-        await _chooseBoth(tester);
-        await _correct(tester);
-        expect(tester.takeException(), isNull);
-        expect(find.text('Total marks: 2 / 4'), findsOneWidget);
-      });
-    }
+      final ScrollPosition position =
+          tester.state<ScrollableState>(find.ancestor(of: first, matching: find.byType(Scrollable)).first).position;
+      expect(position.maxScrollExtent, greaterThan(0), reason: 'the column is taller than the window');
+      final TestPointer mouse = TestPointer(1, PointerDeviceKind.mouse);
+      mouse.hover(tester.getCenter(first));
+      await tester.sendEventToBinding(mouse.scroll(const Offset(0, 200)));
+      await tester.pumpAndSettle();
+      expect(position.pixels, greaterThan(0), reason: 'the mouse wheel still scrolls it');
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
-    testWidgets('switches theme from Settings at once, and saves the choice', (WidgetTester tester) async {
+    testWidgets('marks a paper in the light theme without overflow', (WidgetTester tester) async {
+      await _sized(tester);
+      await tester.pumpWidget(ExamCorrectorApp(controller: fakeController()));
+      await tester.pumpAndSettle();
+
+      final BuildContext context = tester.element(find.text('Correction result'));
+      expect(context.colors, AppColors.light);
+      expect(Theme.of(context).brightness, Brightness.light);
+
+      await _chooseBoth(tester);
+      await _correct(tester);
+      expect(tester.takeException(), isNull);
+      expect(find.text('Total marks: 2 / 4'), findsOneWidget);
+    });
+
+    testWidgets('turns glass blur off from Settings at once, and saves the choice', (WidgetTester tester) async {
       await _sized(tester, const Size(1280, 1000));
       final RecordingSettingsStore store = RecordingSettingsStore();
-      final Appearance appearance = Appearance(store: store);
-      await tester.pumpWidget(ExamCorrectorApp(controller: fakeController(), appearance: appearance));
-
-      await tester.tap(find.text('Settings'));
+      final Transparency transparency = Transparency(store: store);
+      await tester.pumpWidget(ExamCorrectorApp(controller: fakeController(), transparency: transparency));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Dark'));
+      expect(find.byType(BackdropFilter), findsWidgets, reason: 'glass blurs by default');
+
+      await tester.tap(find.byKey(const Key('open-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-section-look')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-glass-blur')));
       await tester.pumpAndSettle();
 
-      expect(appearance.value, ThemeMode.dark);
-      expect(store.savedTheme, 'dark');
-      final BuildContext context = tester.element(find.text('Correction result'));
-      expect(context.colors, AppColors.dark);
+      expect(transparency.value, 0);
+      expect(store.savedTransparency, 0);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BackdropFilter), findsNothing, reason: 'the same bars, drawn solid');
     });
   });
+}
+
+/// The first marker is out of its allowance; the backup, asked on its own,
+/// marks.
+class _FirstMarkerOut extends FakeMarker {
+  @override
+  Future<List<QuestionResult>> mark(
+    List<MarkingTask> tasks, {
+    required String guidance,
+    required bool typedAnswerSheet,
+    String? judge,
+    List<String>? models,
+    StageProgress? onProgress,
+    CancellationToken? cancel,
+  }) {
+    if (models == null) {
+      calls++;
+      throw const CorrectionException('No quota left.', quotaExhausted: true);
+    }
+    return super.mark(
+      tasks,
+      guidance: guidance,
+      typedAnswerSheet: typedAnswerSheet,
+      judge: judge,
+      models: models,
+      onProgress: onProgress,
+      cancel: cancel,
+    );
+  }
 }

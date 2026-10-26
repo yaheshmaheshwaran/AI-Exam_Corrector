@@ -1,42 +1,63 @@
 import 'package:flutter/material.dart';
 
 import 'package:exam_corrector/app/app_colors.dart';
+import 'package:exam_corrector/app/app_glass.dart';
 import 'package:exam_corrector/app/press_feedback.dart';
 import 'package:exam_corrector/services/ui_sound.dart';
 
-/// Geometry shared by every screen, and the light and dark themes built from
-/// [AppColors].
+/// Geometry shared by every screen, and the theme built from [AppColors].
 ///
-/// The design is deliberately quiet: flat surfaces separated by a hairline,
-/// one accent, no shadows and no ripples. Motion is limited to a faint press
-/// wash with a soft click ([PressFeedback]) and a quick fade between pages.
+/// The app is light only, in liquid glass over the Warm mist backdrop:
+/// floating rounded bars that blur what passes under them, content on
+/// quieter glass cards, and raised pill buttons that press down when
+/// clicked. One accent, espresso, marks the main action and what is
+/// selected. Presses play a soft click ([PressFeedback]); pages fade.
 /// Colours live in [AppColors]; widgets read them with `context.colors`.
 class AppTheme {
   const AppTheme._();
 
   // Geometry, on a 4px grid.
-  static const double controlRadius = 6;
-  static const double cardRadius = 10;
+  static const double controlRadius = 8;
+  static const double fieldRadius = 12;
+  static const double cardRadius = 16;
+  static const double barRadius = 16;
+  static const double footRadius = 20;
+  static const double railRadius = 20;
+  static const double dialogRadius = 22;
   static const double pillRadius = 999;
   static const double controlHeight = 32;
+  static const double compactHeight = 28;
+  static const double primaryHeight = 40;
   static const double gapSmall = 8;
   static const double gap = 12;
   static const double pagePadding = 16;
   static const double gapLarge = 24;
 
+  /// Floating glass sits this far in from the window's edges.
+  static const double floatInset = 10;
+
+  /// A floating toolbar's height, and how far content below it starts.
+  static const double barHeight = 46;
+  static const double underBar = floatInset + barHeight + floatInset;
+
+  /// The navigation rail's slot, the setup column beside it, and the
+  /// status bar floating at the foot of the window.
+  static const double railWidth = 80;
+  static const double setupWidth = 320;
+  static const double statusHeight = 32;
+
   static const String fontFamily = 'PlusJakartaSans';
 
   /// Built once: rebuilding ThemeData on every frame is wasted work.
-  static final ThemeData light = _build(AppColors.light, Brightness.light);
-  static final ThemeData dark = _build(AppColors.dark, Brightness.dark);
+  static final ThemeData light = _build(AppColors.light);
 
-  static ThemeData _build(AppColors c, Brightness brightness) {
-    // Disabled controls are softer than faint text, which is now kept
-    // readable for hints and details; disabled text is exempt from contrast
-    // minimums and should look unavailable.
+  static ThemeData _build(AppColors c) {
+    // Disabled controls are softer than faint text, which is kept readable
+    // for hints and details; disabled text is exempt from contrast minimums
+    // and should look unavailable.
     final Color disabled = Color.lerp(c.textFaint, c.surface, 0.4)!;
     final ColorScheme scheme = ColorScheme(
-      brightness: brightness,
+      brightness: Brightness.light,
       primary: c.primary,
       onPrimary: c.onPrimary,
       primaryContainer: c.primarySoft,
@@ -86,31 +107,33 @@ class AppTheme {
       fontFamily: fontFamily,
     );
 
-    final RoundedRectangleBorder controlShape =
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(controlRadius));
+    const OutlinedBorder pill = StadiumBorder();
     const TextStyle buttonText = TextStyle(fontSize: 13, fontWeight: medium, fontFamily: fontFamily);
+    // A wash of white on hover: glass catching more light.
+    const Color glassHover = Color(0x99FFFFFF);
 
     OutlineInputBorder inputBorder(Color color, [double width = 1]) => OutlineInputBorder(
-          borderRadius: BorderRadius.circular(controlRadius),
+          borderRadius: BorderRadius.circular(fieldRadius),
           borderSide: BorderSide(color: color, width: width),
         );
 
     return ThemeData(
       useMaterial3: true,
-      brightness: brightness,
+      brightness: Brightness.light,
       colorScheme: scheme,
       extensions: <ThemeExtension<dynamic>>[c],
-      scaffoldBackgroundColor: c.bg,
-      canvasColor: c.bg,
+      // Screens are see-through: the Warm mist backdrop lies under them all.
+      scaffoldBackgroundColor: Colors.transparent,
+      canvasColor: c.surface,
       fontFamily: fontFamily,
       textTheme: text,
       visualDensity: VisualDensity.compact,
       // Presses get a faint wash and a click instead of a ripple; pages fade
       // rather than slide.
       splashFactory: const PressFeedback(),
-      splashColor: c.text.withValues(alpha: 0.10),
+      splashColor: c.text.withValues(alpha: 0.08),
       highlightColor: Colors.transparent,
-      hoverColor: c.surfaceMuted,
+      hoverColor: glassHover,
       focusColor: c.primarySoft,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: <TargetPlatform, PageTransitionsBuilder>{
@@ -119,71 +142,64 @@ class AppTheme {
           TargetPlatform.linux: _QuickFade(),
         },
       ),
-      dividerTheme: DividerThemeData(color: c.border, thickness: 1, space: 1),
+      dividerTheme: DividerThemeData(color: c.text.withValues(alpha: 0.07), thickness: 1, space: 1),
       iconTheme: IconThemeData(color: c.textMuted, size: 16),
       tooltipTheme: TooltipThemeData(
         waitDuration: const Duration(milliseconds: 400),
         textStyle: TextStyle(fontSize: 12, color: c.surface, fontFamily: fontFamily),
         decoration: BoxDecoration(
-          color: c.text,
+          color: c.text.withValues(alpha: 0.9),
           borderRadius: BorderRadius.circular(controlRadius),
         ),
       ),
-      // Secondary button.
+      // Secondary button: a raised white pill.
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: ButtonStyle(
           minimumSize: const WidgetStatePropertyAll<Size>(Size(0, controlHeight)),
-          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.symmetric(horizontal: 12)),
-          backgroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) {
-            if (states.contains(WidgetState.disabled)) return Colors.transparent;
-            if (states.contains(WidgetState.pressed)) return c.border;
-            if (states.contains(WidgetState.hovered)) return c.surfaceMuted;
-            return c.surface;
-          }),
+          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.symmetric(horizontal: 14)),
+          backgroundColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
           foregroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
               states.contains(WidgetState.disabled) ? disabled : c.text),
           iconColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
               states.contains(WidgetState.disabled) ? disabled : c.textMuted),
-          side: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-              BorderSide(color: states.contains(WidgetState.disabled) ? c.border : c.borderStrong)),
-          shape: WidgetStatePropertyAll<OutlinedBorder>(controlShape),
+          overlayColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+          side: const WidgetStatePropertyAll<BorderSide>(BorderSide.none),
+          shape: const WidgetStatePropertyAll<OutlinedBorder>(pill),
           textStyle: const WidgetStatePropertyAll<TextStyle>(buttonText),
           elevation: const WidgetStatePropertyAll<double>(0),
+          backgroundBuilder: RaisedPill.secondary,
         ),
       ),
-      // The one primary action on a view: it sounds fuller than the rest.
+      // The one primary action on a view: a raised espresso pill that sounds
+      // fuller than the rest.
       filledButtonTheme: FilledButtonThemeData(
         style: ButtonStyle(
           splashFactory: const PressFeedback(sound: UiSoundKind.press),
           minimumSize: const WidgetStatePropertyAll<Size>(Size(0, controlHeight)),
-          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.symmetric(horizontal: 16)),
-          backgroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) {
-            if (states.contains(WidgetState.disabled)) return c.surfaceMuted;
-            if (states.contains(WidgetState.hovered) || states.contains(WidgetState.pressed)) {
-              return c.primaryHover;
-            }
-            return c.primary;
-          }),
+          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.symmetric(horizontal: 18)),
+          backgroundColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
           foregroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
               states.contains(WidgetState.disabled) ? disabled : c.onPrimary),
           iconColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
               states.contains(WidgetState.disabled) ? disabled : c.onPrimary),
-          shape: WidgetStatePropertyAll<OutlinedBorder>(controlShape),
+          overlayColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+          shape: const WidgetStatePropertyAll<OutlinedBorder>(pill),
           textStyle: const WidgetStatePropertyAll<TextStyle>(buttonText),
           elevation: const WidgetStatePropertyAll<double>(0),
+          backgroundBuilder: RaisedPill.primary,
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
           minimumSize: const WidgetStatePropertyAll<Size>(Size(0, controlHeight)),
-          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.symmetric(horizontal: 10)),
+          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.symmetric(horizontal: 12)),
           foregroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
               states.contains(WidgetState.disabled) ? disabled : c.primary),
           iconColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
               states.contains(WidgetState.disabled) ? disabled : c.primary),
           backgroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-              states.contains(WidgetState.hovered) ? c.primarySoft : Colors.transparent),
-          shape: WidgetStatePropertyAll<OutlinedBorder>(controlShape),
+              states.contains(WidgetState.hovered) ? glassHover : Colors.transparent),
+          shape: const WidgetStatePropertyAll<OutlinedBorder>(pill),
           textStyle: const WidgetStatePropertyAll<TextStyle>(buttonText),
         ),
       ),
@@ -195,24 +211,24 @@ class AppTheme {
           foregroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
               states.contains(WidgetState.disabled) ? disabled : c.textMuted),
           backgroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-              states.contains(WidgetState.hovered) ? c.surfaceMuted : Colors.transparent),
-          shape: WidgetStatePropertyAll<OutlinedBorder>(controlShape),
+              states.contains(WidgetState.hovered) ? glassHover : Colors.transparent),
+          shape: const WidgetStatePropertyAll<OutlinedBorder>(pill),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: c.surface,
+        fillColor: Colors.white.withValues(alpha: 0.72),
         isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         hintStyle: TextStyle(color: c.textFaint, fontSize: 13),
         // Icons inside a field keep it at control height.
         prefixIconConstraints: const BoxConstraints(minWidth: 34, minHeight: controlHeight),
         suffixIconConstraints: const BoxConstraints(minWidth: 34, minHeight: controlHeight),
         labelStyle: TextStyle(color: c.textMuted, fontSize: 13),
         helperStyle: TextStyle(color: c.textMuted, fontSize: 12),
-        border: inputBorder(c.borderStrong),
-        enabledBorder: inputBorder(c.borderStrong),
-        disabledBorder: inputBorder(c.border),
+        border: inputBorder(c.text.withValues(alpha: 0.12)),
+        enabledBorder: inputBorder(c.text.withValues(alpha: 0.12)),
+        disabledBorder: inputBorder(c.text.withValues(alpha: 0.07)),
         focusedBorder: inputBorder(c.primary, 1.5),
         errorBorder: inputBorder(c.danger),
         focusedErrorBorder: inputBorder(c.danger, 1.5),
@@ -236,23 +252,23 @@ class AppTheme {
         crossAxisMargin: 2,
       ),
       cardTheme: CardThemeData(
-        color: c.surface,
+        color: AppGlass.cardFill,
         elevation: 0,
         margin: EdgeInsets.zero,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(cardRadius),
-          side: BorderSide(color: c.border),
+          side: const BorderSide(color: AppGlass.rim),
         ),
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: c.surfaceMuted,
+        backgroundColor: Colors.white.withValues(alpha: 0.6),
         selectedColor: c.primarySoft,
         disabledColor: c.surfaceMuted,
-        side: BorderSide(color: c.border),
+        side: BorderSide(color: c.text.withValues(alpha: 0.1)),
         labelStyle: TextStyle(fontSize: 12, color: c.text, fontFamily: fontFamily),
         padding: const EdgeInsets.symmetric(horizontal: 6),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(controlRadius)),
+        shape: const StadiumBorder(),
         checkmarkColor: c.primary,
         showCheckmark: false,
       ),
@@ -262,47 +278,58 @@ class AppTheme {
         textColor: c.text,
         selectedColor: c.primary,
         selectedTileColor: c.primarySoft,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(controlRadius)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(controlRadius + 2)),
       ),
       checkboxTheme: CheckboxThemeData(
         fillColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-            states.contains(WidgetState.selected) ? c.primary : Colors.transparent),
+            states.contains(WidgetState.selected) ? c.primary : Colors.white.withValues(alpha: 0.7)),
         checkColor: WidgetStatePropertyAll<Color>(c.onPrimary),
         side: BorderSide(color: c.borderStrong, width: 1.5),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
       ),
       radioTheme: RadioThemeData(
         fillColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
             states.contains(WidgetState.selected) ? c.primary : c.borderStrong),
       ),
       switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-            states.contains(WidgetState.selected) ? c.onPrimary : c.textMuted),
+        thumbColor: const WidgetStatePropertyAll<Color>(Colors.white),
         trackColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-            states.contains(WidgetState.selected) ? c.primary : c.surfaceMuted),
-        trackOutlineColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-            states.contains(WidgetState.selected) ? c.primary : c.borderStrong),
+            states.contains(WidgetState.selected) ? c.primary : c.text.withValues(alpha: 0.14)),
+        trackOutlineColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+        thumbIcon: const WidgetStatePropertyAll<Icon?>(null),
       ),
+      // A capsule track with the chosen segment lit white on it.
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(
           splashFactory: const PressFeedback(sound: UiSoundKind.toggle),
           minimumSize: const WidgetStatePropertyAll<Size>(Size(0, controlHeight)),
           visualDensity: VisualDensity.compact,
           backgroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-              states.contains(WidgetState.selected) ? c.primarySoft : c.surface),
+              states.contains(WidgetState.selected) ? Colors.white : c.text.withValues(alpha: 0.06)),
           foregroundColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
-              states.contains(WidgetState.selected) ? c.primary : c.text),
-          side: WidgetStatePropertyAll<BorderSide>(BorderSide(color: c.borderStrong)),
-          shape: WidgetStatePropertyAll<OutlinedBorder>(controlShape),
+              states.contains(WidgetState.disabled)
+                  ? disabled
+                  : states.contains(WidgetState.selected)
+                      ? c.text
+                      : c.textMuted),
+          overlayColor: WidgetStatePropertyAll<Color>(c.text.withValues(alpha: 0.04)),
+          side: WidgetStatePropertyAll<BorderSide>(BorderSide(color: c.text.withValues(alpha: 0.1), width: 0.5)),
+          shape: const WidgetStatePropertyAll<OutlinedBorder>(pill),
           textStyle: const WidgetStatePropertyAll<TextStyle>(buttonText),
         ),
       ),
       dataTableTheme: DataTableThemeData(
-        headingRowColor: WidgetStatePropertyAll<Color>(c.surfaceMuted),
+        headingRowColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+        dataRowColor: WidgetStateProperty.resolveWith((Set<WidgetState> states) =>
+            states.contains(WidgetState.selected)
+                ? c.primarySoft
+                : states.contains(WidgetState.hovered)
+                    ? Colors.white.withValues(alpha: 0.55)
+                    : Colors.transparent),
         headingTextStyle: TextStyle(
           fontSize: 12,
           fontWeight: semibold,
-          color: c.textMuted,
+          color: c.textFaint,
           fontFamily: fontFamily,
         ),
         dataTextStyle: TextStyle(fontSize: 13, color: c.text, fontFamily: fontFamily),
@@ -310,54 +337,56 @@ class AppTheme {
         headingRowHeight: 36,
         dataRowMinHeight: 40,
         dataRowMaxHeight: 48,
-        horizontalMargin: 12,
+        horizontalMargin: 14,
         columnSpacing: 24,
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: c.surface,
-        elevation: 4,
+        color: Colors.white.withValues(alpha: 0.96),
+        elevation: 8,
+        shadowColor: const Color(0x403E2F23),
         surfaceTintColor: Colors.transparent,
         textStyle: TextStyle(fontSize: 13, color: c.text, fontFamily: fontFamily),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(cardRadius),
-          side: BorderSide(color: c.border),
+          borderRadius: BorderRadius.circular(controlRadius + 2),
+          side: const BorderSide(color: AppGlass.hairline),
         ),
       ),
       menuTheme: MenuThemeData(
         style: MenuStyle(
-          backgroundColor: WidgetStatePropertyAll<Color>(c.surface),
+          backgroundColor: WidgetStatePropertyAll<Color>(Colors.white.withValues(alpha: 0.96)),
           surfaceTintColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
-          side: WidgetStatePropertyAll<BorderSide>(BorderSide(color: c.border)),
+          side: const WidgetStatePropertyAll<BorderSide>(BorderSide(color: AppGlass.hairline)),
           shape: WidgetStatePropertyAll<OutlinedBorder>(
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(cardRadius)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(controlRadius + 2)),
           ),
         ),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: c.text,
+        backgroundColor: c.text.withValues(alpha: 0.92),
         contentTextStyle: TextStyle(fontSize: 13, color: c.surface, fontFamily: fontFamily),
         actionTextColor: c.primarySoft,
         elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(cardRadius)),
+        shape: const StadiumBorder(),
         width: 480,
       ),
+      // A white sheet over the blurred, faintly dimmed window: the blur
+      // lifts it, so it needs no heavy shadow, only a crisp edge.
       dialogTheme: DialogThemeData(
-        backgroundColor: c.surface,
+        backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
-        elevation: 8,
-        shadowColor: Colors.black.withValues(alpha: 0.2),
-        barrierColor: Colors.black.withValues(alpha: brightness == Brightness.dark ? 0.6 : 0.35),
+        elevation: 0,
+        barrierColor: Colors.black.withValues(alpha: 0.12),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(cardRadius + 2),
-          side: BorderSide(color: c.border),
+          borderRadius: BorderRadius.circular(dialogRadius),
+          side: BorderSide(color: c.text.withValues(alpha: 0.1)),
         ),
         titleTextStyle: text.titleMedium,
         contentTextStyle: text.bodyMedium,
-        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
       ),
       appBarTheme: AppBarTheme(
-        backgroundColor: c.surface,
+        backgroundColor: Colors.transparent,
         foregroundColor: c.text,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -365,14 +394,13 @@ class AppTheme {
         toolbarHeight: 48,
         titleTextStyle: text.titleSmall,
         iconTheme: IconThemeData(color: c.textMuted, size: 18),
-        shape: Border(bottom: BorderSide(color: c.border)),
       ),
       tabBarTheme: TabBarThemeData(
         splashFactory: const PressFeedback(sound: UiSoundKind.toggle),
         labelColor: c.primary,
         unselectedLabelColor: c.textMuted,
         indicatorColor: c.primary,
-        dividerColor: c.border,
+        dividerColor: Colors.transparent,
         labelStyle: buttonText,
         unselectedLabelStyle: buttonText,
       ),
@@ -382,6 +410,106 @@ class AppTheme {
         collapsedIconColor: c.textMuted,
         shape: const Border(),
         collapsedShape: const Border(),
+      ),
+    );
+  }
+}
+
+/// Raised pills: soft buttons with a small ledge under them that press down
+/// when clicked. Drawn behind a button's label as its background, so every
+/// FilledButton and OutlinedButton gets them from the theme.
+/// Under reduced motion the press changes colour only.
+abstract final class RaisedPill {
+  static const StadiumBorder _pill = StadiumBorder();
+
+  /// The top of a pill catches the light.
+  static const LinearGradient _sheen = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.center,
+    colors: <Color>[Color(0x2EFFFFFF), Color(0x00FFFFFF)],
+  );
+
+  static bool _pressed(BuildContext context, Set<WidgetState> states) =>
+      states.contains(WidgetState.pressed) && !AppMotion.still(context);
+
+  /// The main action: an espresso gradient on a dark ledge.
+  static Widget primary(BuildContext context, Set<WidgetState> states, Widget? child) {
+    final AppColors c = context.colors;
+    if (states.contains(WidgetState.disabled)) {
+      return DecoratedBox(
+        decoration: ShapeDecoration(color: c.surfaceMuted, shape: StadiumBorder(side: BorderSide(color: c.border))),
+        child: child,
+      );
+    }
+    final bool pressed = _pressed(context, states);
+    final bool lit = states.contains(WidgetState.hovered) || states.contains(WidgetState.focused);
+    return Transform.translate(
+      offset: Offset(0, pressed ? 2 : 0),
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          shape: _pill,
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: lit
+                ? const <Color>[Color(0xFF76604E), Color(0xFF47372B)]
+                : const <Color>[Color(0xFF6A5443), Color(0xFF3E2F23)],
+          ),
+          shadows: pressed
+              ? const <BoxShadow>[BoxShadow(color: Color(0x333E2F23), blurRadius: 6, offset: Offset(0, 1))]
+              : const <BoxShadow>[
+                  BoxShadow(color: Color(0xFF2A1F16), offset: Offset(0, 2)),
+                  BoxShadow(color: Color(0x473E2F23), blurRadius: 14, offset: Offset(0, 5)),
+                ],
+        ),
+        child: DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: const ShapeDecoration(shape: _pill, gradient: _sheen),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Every other button: a white pill on a faint warm ledge.
+  static Widget secondary(BuildContext context, Set<WidgetState> states, Widget? child) {
+    final AppColors c = context.colors;
+    if (states.contains(WidgetState.disabled)) {
+      return DecoratedBox(
+        decoration: ShapeDecoration(
+          color: Colors.white.withValues(alpha: 0.4),
+          shape: StadiumBorder(side: BorderSide(color: c.text.withValues(alpha: 0.08), width: 0.5)),
+        ),
+        child: child,
+      );
+    }
+    final bool pressed = _pressed(context, states);
+    final bool lit = states.contains(WidgetState.hovered) || states.contains(WidgetState.focused);
+    return Transform.translate(
+      offset: Offset(0, pressed ? 1 : 0),
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          shape: StadiumBorder(
+            side: BorderSide(
+              color: states.contains(WidgetState.focused) ? c.primary : c.text.withValues(alpha: 0.15),
+              width: states.contains(WidgetState.focused) ? 1.5 : 0.5,
+            ),
+          ),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: lit
+                ? const <Color>[Color(0xFFFFFFFF), Color(0xFFF8F7F5)]
+                : const <Color>[Color(0xFFFFFFFF), Color(0xFFF3F1EE)],
+          ),
+          shadows: pressed
+              ? const <BoxShadow>[BoxShadow(color: Color(0x0F171717), blurRadius: 2, offset: Offset(0, 1))]
+              : const <BoxShadow>[
+                  BoxShadow(color: Color(0x1A3E2F23), offset: Offset(0, 1.5)),
+                  BoxShadow(color: Color(0x14171717), blurRadius: 8, offset: Offset(0, 3)),
+                ],
+        ),
+        child: child,
       ),
     );
   }

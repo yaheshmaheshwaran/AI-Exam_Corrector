@@ -1,0 +1,213 @@
+<title>Marklume Model Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Public+Sans:wght@400;600;700&display=swap">
+<style>
+/* Layout: a 3 × 2 grid. Rows are the presets, columns are Gemini off / on.
+   Each cell shows the model order for each kind of job, left to right.
+   Colour = where the model runs; Ollama (amber) is the one to follow. */
+:root {
+  --bg: #f3f4f7; --surface: #ffffff; --surface-2: #eceef3;
+  --ink: #1a1e29; --muted: #5a6275; --line: #d6dae3;
+  --accent: #3446c9; --accent-soft: #e7eafc;
+  --gem: #1b5bc9; --gem-bg: #e2ebfb;
+  --open: #7338bd; --open-bg: #efe5fa;
+  --oll: #9a5200; --oll-bg: #fbeedb; --oll-strong: #e08a12;
+  --none: #6b7280; --none-bg: #eceef2;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Public Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101218; --surface: #181b23; --surface-2: #222632; --ink: #e6e8ef; --muted: #9ca4b7; --line: #2f3442;
+    --accent: #95a2ff; --accent-soft: #222a4e; --gem: #8fb9ff; --gem-bg: #16253f; --open: #c9a6f6; --open-bg: #2a1d3e;
+    --oll: #f2bb6c; --oll-bg: #3a2912; --oll-strong: #f2a33a; --none: #a7aebc; --none-bg: #272b36;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101218; --surface: #181b23; --surface-2: #222632; --ink: #e6e8ef; --muted: #9ca4b7; --line: #2f3442;
+  --accent: #95a2ff; --accent-soft: #222a4e; --gem: #8fb9ff; --gem-bg: #16253f; --open: #c9a6f6; --open-bg: #2a1d3e;
+  --oll: #f2bb6c; --oll-bg: #3a2912; --oll-strong: #f2a33a; --none: #a7aebc; --none-bg: #272b36;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14.5px; line-height: 1.5; padding-inline: 16px; padding-block: 28px 48px; }
+.wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 22px; }
+h1 { font-family: var(--font-display); font-size: clamp(26px, 3.6vw, 34px); font-weight: 800; margin: 0; letter-spacing: -0.01em; }
+h2 { font-family: var(--font-display); font-size: 17px; font-weight: 700; margin: 0; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 80ch; }
+
+/* Job key */
+.jobs { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.job { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0; }
+.job h2 { font-size: 15px; }
+.job p { color: var(--muted); font-size: 13.5px; }
+
+/* Grid */
+.grid { display: grid; grid-template-columns: 170px 1fr 1fr; gap: 12px; align-items: stretch; }
+.colhead { font-family: var(--font-display); font-weight: 700; font-size: 16px; padding: 4px 4px 0; }
+.colhead span { display: block; font-family: var(--font-body); font-weight: 400; font-size: 13px; color: var(--muted); }
+.rowhead { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; align-content: start; gap: 4px; }
+.rowhead h2 { font-size: 16px; }
+.rowhead p { font-size: 13px; color: var(--muted); }
+.cell { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.lane { display: grid; gap: 6px; }
+.lane-name { font-size: 11.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.m { display: grid; gap: 1px; padding: 6px 10px; border-radius: 8px; border: 1.5px solid; min-width: 0; }
+.m b { font-size: 13.5px; font-weight: 700; }
+.m small { font-size: 11.5px; opacity: 0.85; }
+.m.gem { color: var(--gem); background: var(--gem-bg); border-color: var(--gem); }
+.m.open { color: var(--open); background: var(--open-bg); border-color: var(--open); }
+.m.oll { color: var(--oll); background: var(--oll-bg); border-color: var(--oll-strong); border-width: 2px; }
+.m.none { color: var(--none); background: var(--none-bg); border-color: transparent; font-style: italic; }
+.then { display: grid; justify-items: center; color: var(--muted); font-size: 10.5px; line-height: 1.1; }
+.then::before { content: "→"; font-size: 16px; color: var(--muted); }
+.ollama-note { border-left: 4px solid var(--oll-strong); background: var(--oll-bg); color: var(--ink); border-radius: 6px; padding: 8px 10px; font-size: 13.5px; }
+.ollama-note b { color: var(--oll); }
+
+/* Rules */
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.rule { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 13.5px; min-width: 0; }
+.rule h2 { font-size: 15px; margin-bottom: 4px; }
+.rule p { color: var(--muted); }
+.foot { color: var(--muted); font-size: 12.5px; }
+
+/* Print: A4 landscape, light colours always, colours kept, no box split. */
+@page { size: A4 landscape; margin: 9mm; }
+@media print {
+  :root, :root:not([data-theme="light"]), :root[data-theme="dark"] {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #eceef3; --ink: #1a1e29; --muted: #4f5769; --line: #c9ceda;
+    --accent: #3446c9; --accent-soft: #e7eafc; --gem: #1b5bc9; --gem-bg: #e2ebfb; --open: #7338bd; --open-bg: #efe5fa;
+    --oll: #8a4a00; --oll-bg: #fbeedb; --oll-strong: #e08a12; --none: #6b7280; --none-bg: #eceef2;
+    color-scheme: light;
+  }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-size: 11px; padding: 0; }
+  .wrap { max-width: none; gap: 9px; }
+  h1 { font-size: 22px; }
+  .lede, .job p, .rule p, .rowhead p { font-size: 10.5px; }
+  .grid { grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+  .colhead.blank { display: none !important; }
+  .rowhead { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px; padding: 5px 10px !important; margin-top: 4px; background: var(--surface-2); border-color: var(--surface-2); }
+  .rowhead h2 { font-size: 13px; }
+  .lane { grid-template-columns: 70px 1fr; align-items: center; gap: 4px; }
+  .lane-name { font-size: 9.5px; }
+  .chain { gap: 3px; flex-wrap: nowrap; }
+  .rowhead.gpu { break-before: page; margin-top: 0; }
+  .cell .ollama-note { margin-top: 0; }
+  .jobs, .rules { gap: 8px; }
+  .job h2, .rule h2 { font-size: 12px; }
+  .colhead { font-size: 13px; padding: 0 2px; }
+  .colhead span { display: inline; margin-left: 6px; font-size: 10.5px; }
+  .then { font-size: 8.5px; }
+  .cell { padding: 8px 9px; gap: 5px; }
+  .job, .rule { padding: 8px 10px; }
+  .m { padding: 3px 6px; white-space: nowrap; flex-shrink: 0; }
+  .then { flex-shrink: 0; }
+  .m b { font-size: 11.5px; } .m small { font-size: 10px; }
+  .ollama-note { font-size: 10.5px; padding: 6px 8px; }
+  .cell, .rowhead, .job, .rule, .lane { break-inside: avoid; }
+  .colhead { display: block !important; }
+  .cell::before { content: none !important; }
+}
+
+@media screen and (max-width: 860px) {
+  .grid { grid-template-columns: 1fr; }
+  .colhead.blank { display: none; }
+  .colhead { display: none; }
+  .cell::before { content: attr(data-label); font-family: var(--font-display); font-weight: 700; font-size: 14px; }
+}
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:8px">
+    <h1>Marklume Model Flow</h1>
+    <p class="lede">Which AI model Marklume asks, in what order, for each preset with Gemini off and on. Read each row left to right: the first model is asked first, and the next one only if it fails (offline, out of quota, refused, or keeps erroring). Ollama, in amber, is the model on your Mac.</p>
+  </header>
+
+  <section class="jobs" aria-label="The two kinds of AI job">
+    <div class="job"><h2>Reading jobs</h2><p>Copy what is on the page: page layout, a second reading of unclear handwriting, equations, syllabus import. TrOCR on your Mac reads all handwriting first; a model is asked only for what TrOCR is unsure of.</p></div>
+    <div class="job"><h2>Judgement jobs</h2><p>Decide what counts: reading the question paper, diagrams, the AI answer key, matching your own key, and marking.</p></div>
+    <div class="job"><h2>Backup marker</h2><p>Only with Gemini on. When every Gemini marking model is out of quota, it marks whole scripts instead, and every mark is flagged for your review.</p></div>
+  </section>
+
+  <section class="grid" aria-label="Model order for every setup">
+    <div class="colhead blank"></div>
+    <div class="colhead">Gemini off<span>the default on a new install</span></div>
+    <div class="colhead">Gemini on<span>needs a Gemini key</span></div>
+
+    <!-- This computer -->
+    <div class="rowhead"><h2>This computer</h2><p>Preset: Ollama on your Mac. Nothing to connect.</p></div>
+    <div class="cell" data-label="This computer · Gemini off">
+      <div class="lane"><span class="lane-name">Reading jobs</span>
+        <div class="chain"><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Judgement jobs</span>
+        <div class="chain"><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Backup marker</span>
+        <div class="chain"><span class="m none">none</span></div></div>
+      <p class="ollama-note"><b>Ollama does everything.</b> There is nothing after it: if the Ollama app is closed, every AI step fails.</p>
+    </div>
+    <div class="cell" data-label="This computer · Gemini on">
+      <div class="lane"><span class="lane-name">Reading jobs</span>
+        <div class="chain"><span class="m gem"><b>Gemini 3.5 Flash</b><small>reading model</small></span><span class="then">if it fails</span><span class="m gem"><b>Gemini 3.5 Flash-Lite</b><small>reading model</small></span><span class="then">if it fails</span><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Judgement jobs</span>
+        <div class="chain"><span class="m gem"><b>Gemini 3.6 Flash</b><small>marking model</small></span><span class="then">if it fails</span><span class="m gem"><b>Gemini 3.7 Flash</b><small>marking model</small></span></div></div>
+      <div class="lane"><span class="lane-name">Backup marker</span>
+        <div class="chain"><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <p class="ollama-note"><b>Ollama is the last reader and the backup marker.</b> It reads when both Gemini reading models fail, and marks whole scripts when Gemini's marking quota runs out.</p>
+    </div>
+
+    <!-- GPU server -->
+    <div class="rowhead gpu"><h2>GPU server</h2><p>Preset: your Kaggle notebook running vLLM, reached through the Cloudflare tunnel.</p></div>
+    <div class="cell" data-label="GPU server · Gemini off">
+      <div class="lane"><span class="lane-name">Reading jobs</span>
+        <div class="chain"><span class="m open"><b>Kaggle GPU</b><small>Qwen3-VL 8B</small></span><span class="then">if it fails</span><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Judgement jobs</span>
+        <div class="chain"><span class="m open"><b>Kaggle GPU</b><small>Qwen3-VL 8B</small></span><span class="then">if it fails</span><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Backup marker</span>
+        <div class="chain"><span class="m none">none</span></div></div>
+      <p class="ollama-note"><b>Ollama is the fallback for every job.</b> It is asked only when Kaggle cannot be reached or keeps failing, which is why the pop-up at 74% named Ollama.</p>
+    </div>
+    <div class="cell" data-label="GPU server · Gemini on">
+      <div class="lane"><span class="lane-name">Reading jobs</span>
+        <div class="chain"><span class="m gem"><b>Gemini 3.5 Flash</b><small>reading model</small></span><span class="then">if it fails</span><span class="m gem"><b>Gemini 3.5 Flash-Lite</b><small>reading model</small></span><span class="then">if it fails</span><span class="m open"><b>Kaggle GPU</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Judgement jobs</span>
+        <div class="chain"><span class="m gem"><b>Gemini 3.6 Flash</b><small>marking model</small></span><span class="then">if it fails</span><span class="m gem"><b>Gemini 3.7 Flash</b><small>marking model</small></span></div></div>
+      <div class="lane"><span class="lane-name">Backup marker</span>
+        <div class="chain"><span class="m open"><b>Kaggle GPU</b><small>Qwen3-VL 8B</small></span><span class="then">if it fails</span><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <p class="ollama-note"><b>Ollama only backs up the backup marker.</b> It marks only if Gemini is out of quota and Kaggle is also down. It is never used for reading here.</p>
+    </div>
+
+    <!-- Hugging Face -->
+    <div class="rowhead"><h2>Hugging Face</h2><p>Preset: Hugging Face's hosted models, paid for with your free monthly credits.</p></div>
+    <div class="cell" data-label="Hugging Face · Gemini off">
+      <div class="lane"><span class="lane-name">Reading jobs</span>
+        <div class="chain"><span class="m open"><b>Hugging Face</b><small>Qwen3-VL 30B-A3B</small></span><span class="then">if it fails</span><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Judgement jobs</span>
+        <div class="chain"><span class="m open"><b>Hugging Face</b><small>Qwen3-VL 30B-A3B</small></span><span class="then">if it fails</span><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Backup marker</span>
+        <div class="chain"><span class="m none">none</span></div></div>
+      <p class="ollama-note"><b>Ollama is the fallback for every job.</b> It is asked when Hugging Face is unreachable or out of credits.</p>
+    </div>
+    <div class="cell" data-label="Hugging Face · Gemini on">
+      <div class="lane"><span class="lane-name">Reading jobs</span>
+        <div class="chain"><span class="m gem"><b>Gemini 3.5 Flash</b><small>reading model</small></span><span class="then">if it fails</span><span class="m gem"><b>Gemini 3.5 Flash-Lite</b><small>reading model</small></span><span class="then">if it fails</span><span class="m open"><b>Hugging Face</b><small>Qwen3-VL 30B-A3B</small></span></div></div>
+      <div class="lane"><span class="lane-name">Judgement jobs</span>
+        <div class="chain"><span class="m gem"><b>Gemini 3.6 Flash</b><small>marking model</small></span><span class="then">if it fails</span><span class="m gem"><b>Gemini 3.7 Flash</b><small>marking model</small></span></div></div>
+      <div class="lane"><span class="lane-name">Backup marker</span>
+        <div class="chain"><span class="m open"><b>Hugging Face</b><small>Qwen3-VL 30B-A3B</small></span><span class="then">if it fails</span><span class="m oll"><b>Ollama</b><small>Qwen3-VL 8B</small></span></div></div>
+      <p class="ollama-note"><b>Ollama only backs up the backup marker.</b> It marks only if Gemini is out of quota and Hugging Face also fails. It is never used for reading here.</p>
+    </div>
+  </section>
+
+  <section class="rules" aria-label="Rules that apply everywhere">
+    <div class="rule"><h2>One marker per script</h2><p>The first model that answers a marking request marks that whole script. If it fails halfway, the script stops or waits; it does not switch to the next model mid-script.</p></div>
+    <div class="rule"><h2>Gemini off means nothing goes to Google</h2><p>Even with a key saved. With Gemini on but no key, marking fails instead of falling to the open model.</p></div>
+    <div class="rule"><h2>Ollama must be open to help</h2><p>Ollama is only a fallback if the Ollama app is running with qwen3-vl:8b-instruct pulled. If it is not, the error you see names Ollama, even when the real problem was Kaggle or Hugging Face.</p></div>
+  </section>
+
+  <p class="foot">From Marklume's source, 1 October 2026 (app_config.dart: openChain, chainForTask, backupMarkingModels). Model names are the defaults, except the GPU server, which shows the 8B model you run on Kaggle.</p>
+</div>

@@ -3,9 +3,9 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/core/errors/app_exception.dart';
-import 'package:exam_corrector/pipeline/engines.dart';
-import 'package:exam_corrector/pipeline/marking/answer_key.dart';
-import 'package:exam_corrector/pipeline/marking/teacher_key.dart';
+import 'package:exam_corrector/marking/contracts.dart';
+import 'package:exam_corrector/marking/exam/answer_key.dart';
+import 'package:exam_corrector/marking/exam/teacher_key/teacher_key.dart';
 import 'package:exam_corrector/services/document_text_reader.dart';
 import 'package:exam_corrector/services/pdf_service.dart';
 import 'package:exam_corrector/state/correction_controller.dart';

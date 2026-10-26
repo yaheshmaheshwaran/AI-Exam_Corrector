@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:exam_corrector/app/app_theme.dart';
-import 'package:exam_corrector/widgets/ui/skeleton.dart';
+import 'package:exam_corrector/shared/ui/skeleton.dart';
 
 void main() {
   Widget app({required bool still}) => MaterialApp(

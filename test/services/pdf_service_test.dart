@@ -6,8 +6,7 @@ import 'package:syncfusion_flutter_pdf/pdf.dart';
 
 import 'package:exam_corrector/core/errors/app_exception.dart';
 import 'package:exam_corrector/domain/exam_document.dart';
-import 'package:exam_corrector/pipeline/document/document_inspector.dart';
-import 'package:exam_corrector/pipeline/engines.dart';
+import 'package:exam_corrector/services/document_inspector.dart';
 import 'package:exam_corrector/services/pdf_service.dart';
 
 /// Writes a real PDF, one entry per page; an empty entry is a page with no
@@ -149,19 +148,6 @@ void main() {
       expect(document.source, DocumentSource.image);
       expect(document.pageCount, 1);
     });
-  });
-
-  test('reads text lines with their positions, page by page', () async {
-    final File file = await _writePages(workspace, 'lines.pdf', <String>[_answerText, '']);
-
-    final List<TextLayerPage> pages = await service.readTextLines(file.path);
-
-    expect(pages, hasLength(2));
-    expect(pages.first.lines.first.text, startsWith('1 The mitochondrion'));
-    expect(pages.first.lines[1].text, startsWith('2 Because'));
-    expect(pages.first.lines[1].top, greaterThan(pages.first.lines.first.top));
-    expect(pages.first.width, greaterThan(0));
-    expect(pages.last.lines, isEmpty);
   });
 
   test('rejects a PDF with no usable text layer', () async {

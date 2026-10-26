@@ -256,6 +256,7 @@ class TextEvidenceItem {
     this.enginesDisagree = false,
     this.alternativeReading,
     this.illegible = false,
+    this.possiblyStruck = false,
   });
 
   final String regionId;
@@ -276,12 +277,21 @@ class TextEvidenceItem {
   final String? alternativeReading;
   final bool illegible;
 
+  /// The student may have crossed this writing out. It is kept in the answer
+  /// — losing real content costs marks — and the marker is told.
+  final bool possiblyStruck;
+
   /// The same evidence under another type — printed question text recognised
   /// on an answer booklet, say.
-  TextEvidenceItem retyped(RegionType newType) => TextEvidenceItem(
+  TextEvidenceItem retyped(RegionType newType) => _copy(type: newType);
+
+  /// The same evidence, marked as possibly crossed out.
+  TextEvidenceItem asPossiblyStruck() => _copy(possiblyStruck: true);
+
+  TextEvidenceItem _copy({RegionType? type, bool? possiblyStruck}) => TextEvidenceItem(
         regionId: regionId,
         pageNumber: pageNumber,
-        type: newType,
+        type: type ?? this.type,
         text: text,
         rawText: rawText,
         confidence: confidence,
@@ -290,6 +300,7 @@ class TextEvidenceItem {
         enginesDisagree: enginesDisagree,
         alternativeReading: alternativeReading,
         illegible: illegible,
+        possiblyStruck: possiblyStruck ?? this.possiblyStruck,
       );
 
   JsonMap toJson() => <String, Object?>{
@@ -306,6 +317,7 @@ class TextEvidenceItem {
         'enginesDisagree': enginesDisagree,
         'alternativeReading': ?alternativeReading,
         'illegible': illegible,
+        if (possiblyStruck) 'possiblyStruck': true,
       };
 
   static TextEvidenceItem? fromJson(JsonMap json) {
@@ -318,11 +330,12 @@ class TextEvidenceItem {
       text: readRawString(json['text']) ?? '',
       rawText: readRawString(json['rawText']) ?? '',
       confidence: readConfidence(json['confidence']),
-      source: readEnum(ReadingSource.values, json['source'], ReadingSource.trocr),
+      source: readEnum(ReadingSource.values, json['source'], ReadingSource.vision),
       uncertainSpans: readObjects(json['uncertainSpans'], UncertainSpan.fromJson),
       enginesDisagree: readBool(json['enginesDisagree']) ?? false,
       alternativeReading: readRawString(json['alternativeReading']),
       illegible: readBool(json['illegible']) ?? false,
+      possiblyStruck: readBool(json['possiblyStruck']) ?? false,
     );
   }
 }

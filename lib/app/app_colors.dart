@@ -3,16 +3,14 @@ import 'package:flutter/material.dart';
 /// The application's colours, by role: the Americano palette.
 ///
 /// Every colour has one job. Neutral greys carry the layout; one espresso
-/// accent marks the main action and what is selected (a steamed-milk cream in
-/// dark mode); the four grading colours — sage for full marks, ochre for
+/// accent marks the main action and what is selected; the four grading colours — sage for full marks, ochre for
 /// partial, brick for zero, steel blue for the syllabus bonus — carry marking
 /// meaning and are never used as decoration. The grading colours were chosen
 /// to stay distinct from each other and from the accent under colour-blindness
 /// simulation, and are kept muted so they inform without shouting. Their
-/// fills are tinted just enough to read at a glance against a white or dark
-/// card — soft pastels in light mode, deep tints in dark — so a score chip's
-/// colour is seen, not guessed. Each role has a light and a dark value;
-/// widgets read them through `context.colors` so both themes come for free.
+/// fills are soft pastels, tinted just enough to read at a glance against a
+/// white card, so a score chip's colour is seen, not guessed. The app is
+/// light only; widgets read the colours through `context.colors`.
 @immutable
 class AppColors extends ThemeExtension<AppColors> {
   const AppColors({
@@ -121,38 +119,13 @@ class AppColors extends ThemeExtension<AppColors> {
     track: Color(0xFFE4E4E2),
   );
 
-  static const AppColors dark = AppColors(
-    bg: Color(0xFF121212),
-    surface: Color(0xFF1B1B1B),
-    surfaceMuted: Color(0xFF242424),
-    border: Color(0xFF2C2C2C),
-    borderStrong: Color(0xFF3F3F3F),
-    text: Color(0xFFEDEDED),
-    textMuted: Color(0xFFB9B9B9),
-    textFaint: Color(0xFF9A9A9A),
-    primary: Color(0xFFE8DBD1),
-    primaryHover: Color(0xFFEFE6DF),
-    onPrimary: Color(0xFF121212),
-    primarySoft: Color(0xFF33312F),
-    primaryBorder: Color(0xFF696460),
-    success: Color(0xFF97D4A5),
-    successFill: Color(0xFF1E3122),
-    successBorder: Color(0xFF365D40),
-    warning: Color(0xFFE7AF61),
-    warningFill: Color(0xFF362916),
-    warningBorder: Color(0xFF684D27),
-    danger: Color(0xFFE8847C),
-    dangerFill: Color(0xFF3B2422),
-    dangerBorder: Color(0xFF724440),
-    bonus: Color(0xFF70A9E0),
-    bonusFill: Color(0xFF1D2D3D),
-    bonusBorder: Color(0xFF355575),
-    highlight: Color(0xFF533F19),
-    track: Color(0xFF2C2C2C),
-  );
+  /// The Warm mist backdrop behind every screen: a faint warm glow over
+  /// soft ivory. Tints of the page colour, not new hues; drawn once.
+  static const Color backdropTop = Color(0xFFF8F6F3);
+  static const Color backdropBottom = Color(0xFFF4F1ED);
+  static const Color backdropGlow = Color(0xFFF1E9E0);
 
-  /// Colours drawn over a scanned page. The scan is white paper in either
-  /// theme, so these do not change with it.
+  /// Colours drawn over a scanned page, which is always white paper.
   static const Color regionPrinted = Color(0xFF7A7A7A);
   static const Color regionQuestionNumber = Color(0xFF7C5E3C);
   static const Color regionHandwriting = Color(0xFF0F766E);
@@ -290,6 +263,6 @@ extension AppColorsTones on AppColors {
 }
 
 extension AppColorsContext on BuildContext {
-  /// The colours of the current theme, light or dark.
+  /// The app's colours.
   AppColors get colors => Theme.of(this).extension<AppColors>() ?? AppColors.light;
 }
